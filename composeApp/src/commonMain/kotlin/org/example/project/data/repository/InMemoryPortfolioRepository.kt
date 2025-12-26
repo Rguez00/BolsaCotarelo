@@ -16,6 +16,7 @@ import org.example.project.domain.model.PositionSnapshot
 import org.example.project.domain.model.Transaction
 import org.example.project.domain.model.TransactionType
 import org.example.project.presentation.state.PortfolioState
+import org.example.project.presentation.state.ProfitBarPoint
 import kotlin.math.abs
 import kotlin.math.roundToLong
 
@@ -282,8 +283,8 @@ class InMemoryPortfolioRepository(
         // - Ordenamos por valor absoluto para que se vean las más “importantes”
         // - Limitamos a 12 para que el gráfico no quede ilegible
         val bars = snap.positions
-            .map { p -> org.example.project.presentation.state.ProfitBarPoint(p.ticker, p.pnlEuro) }
-            .sortedByDescending { kotlin.math.abs(it.valueEuro) }
+            .map { p -> ProfitBarPoint(p.ticker, p.pnlEuro) }
+            .sortedByDescending { abs(it.valueEuro) }
             .take(12)
 
         _portfolioState.value = PortfolioState(
