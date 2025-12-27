@@ -24,6 +24,7 @@ import org.example.project.domain.strategy.DipReference
 import org.example.project.domain.strategy.InMemoryStrategiesRepository
 import org.example.project.domain.strategy.StrategyRule
 import org.example.project.engine.MarketEngine
+import org.example.project.platform.rememberAlertNotifier
 import org.example.project.platform.rememberPortfolioJsonFileIO
 import org.example.project.presentation.strategies.StrategiesConfigDialog
 import org.example.project.presentation.ui.PortfolioStateMenuButton
@@ -182,9 +183,22 @@ fun AppRoot() {
     var showImportJson by rememberSaveable { mutableStateOf(false) }
     var jsonText by remember { mutableStateOf("") }
 
+    val notifier = rememberAlertNotifier() // <-- crea este expect/actual o tu wrapper android
+
     LaunchedEffect(alertsState.triggered.size) {
-        banner = alertsState.triggered.lastOrNull()?.message
+        val last = alertsState.triggered.lastOrNull() ?: return@LaunchedEffect
+        banner = last.message
+
+        // ✅ dispara notificación del sistema
+        notifier.notifyPriceAlert(
+            title = "Alerta de precio",
+            message = last.message
+        )
+
+        // opcional
+        notifier.beep()
     }
+
 
     val featured: StockSnapshot? = marketState.stocks.maxByOrNull { it.changePercent }
     val p = remember { AppPalette.darkFintechWhiteBackdrop() }
@@ -503,6 +517,38 @@ fun AppRoot() {
                         neutral = p.neutral
                     )
 
+                    // ✅ ✅ ✅ ESTE ES EL CAMBIO QUE FALTABA
+                    if (showCreateAlert) {
+                        CreateAlertDialog(
+                            defaultTicker = selectedTicker,
+                            tickers = marketState.stocks.map { it.ticker },
+
+                            // ✅ estilos que te está pidiendo
+                            surface = p.surface0,
+                            stroke = p.stroke,
+                            textStrong = p.textStrong,
+                            textSoft = p.textSoft,
+                            neutral = p.neutral,
+                            brand = p.brand,
+
+                            onDismiss = { showCreateAlert = false },
+                            onCreate = { rule ->
+                                appScope.launch {
+                                    runCatching { alertsRepo.upsertRule(rule) }
+                                        .onSuccess {
+                                            banner = "✅ Alerta creada"
+                                            showCreateAlert = false
+                                        }
+                                        .onFailure { e ->
+                                            banner = "⚠️ No se pudo crear la alerta: ${e.message ?: "desconocido"}"
+                                        }
+                                }
+                            }
+                        )
+                    }
+
+                    // ✅ ✅ ✅ FIN DEL CAMBIO
+
                     if (showStrategiesDialog) {
                         StrategiesConfigDialog(
                             strategiesRepo = strategiesRepo,
@@ -538,7 +584,6 @@ fun AppRoot() {
                         )
                     }
 
-                    // ✅ Export JSON dialog (copy)
                     if (showExportJson) {
                         AlertDialog(
                             onDismissRequest = { showExportJson = false },
@@ -565,7 +610,6 @@ fun AppRoot() {
                         )
                     }
 
-                    // ✅ Import JSON dialog (paste)
                     if (showImportJson) {
                         AlertDialog(
                             onDismissRequest = { showImportJson = false },
