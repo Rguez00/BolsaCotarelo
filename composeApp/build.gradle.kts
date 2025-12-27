@@ -7,6 +7,9 @@ plugins {
     alias(libs.plugins.composeMultiplatform)
     alias(libs.plugins.composeCompiler)
     alias(libs.plugins.composeHotReload)
+
+    // ✅ Serialization (kotlinx.serialization)
+    alias(libs.plugins.kotlinSerialization)
 }
 
 kotlin {
@@ -31,7 +34,10 @@ kotlin {
                 implementation(libs.androidx.lifecycle.viewmodelCompose)
                 implementation(libs.androidx.lifecycle.runtimeCompose)
 
-                implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.1")
+                implementation(libs.kotlinx.datetime)
+
+                // ✅ JSON persistencia
+                implementation(libs.kotlinx.serialization.json)
             }
         }
 
@@ -45,9 +51,9 @@ kotlin {
             dependencies {
                 implementation(compose.preview)
 
-                // ✅ Activity Result APIs (rememberLauncherForActivityResult + ActivityResultContracts)
-                implementation("androidx.activity:activity-compose:1.9.0")
-                implementation("androidx.activity:activity-ktx:1.9.0")
+                // ✅ Activity Result APIs
+                implementation(libs.androidx.activity.compose)
+                implementation(libs.androidx.activity.ktx)
             }
         }
 

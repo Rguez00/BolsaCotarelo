@@ -1,24 +1,8 @@
 package org.example.project
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.WindowInsetsSides
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.only
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.systemBars
-import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
@@ -26,7 +10,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
 import org.example.project.core.config.InitialData
 import org.example.project.core.util.fmt2
 import org.example.project.data.repository.InMemoryAlertsRepository
@@ -48,7 +36,18 @@ fun AppRoot() {
     val appScope = rememberCoroutineScope()
     val clipboard = LocalClipboardManager.current
 
-    // ✅ CSV saver (archivo real: Android SAF / Desktop FileDialog)
+    // ✅ Persistencia JSON (Android + Desktop)
+    val jsonStore = rememberJsonStore("portfolio.json")
+    val json = remember {
+        Json {
+            prettyPrint = true
+            ignoreUnknownKeys = true
+            encodeDefaults = true
+        }
+    }
+    var hasLoaded by remember { mutableStateOf(false) }
+
+    // ✅ CSV saver
     val csvSaver = rememberCsvFileSaver()
 
     val marketRepo = remember { InMemoryMarketRepository(InitialData.defaultStocks()) }
@@ -65,6 +64,51 @@ fun AppRoot() {
         )
     }
 
+    // ✅ LOAD al iniciar
+    LaunchedEffect(Unit) {
+        val raw = runCatching { jsonStore.read() }.getOrNull()
+        if (!raw.isNullOrBlank()) {
+            runCatching {
+                val state = json.decodeFromString(
+                    InMemoryPortfolioRepository.PersistedPortfolioV1.serializer(),
+                    raw
+                )
+                portfolioRepo.importPersistedStateV1(state)
+            }.onFailure { it.printStackTrace() }
+        }
+        hasLoaded = true
+    }
+
+    // ✅ AUTO-SAVE con debounce (cuando cambie el estado)
+    LaunchedEffect(Unit) {
+        snapshotFlow { portfolioRepo.portfolioState.value }
+            .debounce(800)
+            .collectLatest {
+                if (!hasLoaded) return@collectLatest
+                runCatching {
+                    val persisted = portfolioRepo.exportPersistedStateV1()
+                    val text = json.encodeToString(
+                        InMemoryPortfolioRepository.PersistedPortfolioV1.serializer(),
+                        persisted
+                    )
+                    jsonStore.write(text)
+                }.onFailure { it.printStackTrace() }
+            }
+    }
+
+    // ✅ Guardado “sí o sí” cuando la app pasa a background (solo Android, en Desktop no hace nada)
+    PlatformSaveOnStop(enabled = hasLoaded) {
+        runCatching {
+            val persisted = portfolioRepo.exportPersistedStateV1()
+            val text = json.encodeToString(
+                InMemoryPortfolioRepository.PersistedPortfolioV1.serializer(),
+                persisted
+            )
+            jsonStore.write(text)
+        }.onFailure { it.printStackTrace() }
+    }
+
+    // ✅ Reglas por defecto (si las quieres)
     LaunchedEffect(Unit) {
         strategiesRepo.upsert(
             StrategyRule.AutoBuyDip(
@@ -97,6 +141,18 @@ fun AppRoot() {
 
     DisposableEffect(Unit) {
         onDispose {
+            // ✅ Guardado final best-effort (por si se cierra desde Desktop o similar)
+            runBlocking {
+                runCatching {
+                    val persisted = portfolioRepo.exportPersistedStateV1()
+                    val text = json.encodeToString(
+                        InMemoryPortfolioRepository.PersistedPortfolioV1.serializer(),
+                        persisted
+                    )
+                    jsonStore.write(text)
+                }.onFailure { it.printStackTrace() }
+            }
+
             engine.close()
             portfolioRepo.close()
             portfolioVm.close()
@@ -124,9 +180,8 @@ fun AppRoot() {
     var showCreateAlert by rememberSaveable { mutableStateOf(false) }
     var banner by rememberSaveable { mutableStateOf<String?>(null) }
 
-    // ✅ Export CSV UI state (fallback copiar)
     var showExportCsv by rememberSaveable { mutableStateOf(false) }
-    var csvText by remember { mutableStateOf("") } // ✅ NO saveable (puede ser enorme)
+    var csvText by remember { mutableStateOf("") }
 
     LaunchedEffect(alertsState.triggered.size) {
         banner = alertsState.triggered.lastOrNull()?.message
@@ -162,7 +217,6 @@ fun AppRoot() {
         }
     }
 
-    // charts history
     val maxPoints = 120
     val priceHistory = remember { mutableStateMapOf<String, MutableList<Double>>() }
     val valueHistory = remember { mutableStateListOf<Double>() }
@@ -186,7 +240,6 @@ fun AppRoot() {
         }
     }
 
-    // ✅ Export TRANSACTIONS CSV: guarda archivo real; si se cancela/falla, abre diálogo para copiar
     val onExportCsv: () -> Unit = {
         appScope.launch {
             val text = runCatching { portfolioRepo.exportTransactionsCsv() }
@@ -198,19 +251,12 @@ fun AppRoot() {
             csvText = text
 
             val rawTs = kotlinx.datetime.Clock.System.now().toString()
-            val safeTs = rawTs
-                .replace(":", "-")
-                .replace(".", "-")
-                .replace("Z", "")
+            val safeTs = rawTs.replace(":", "-").replace(".", "-").replace("Z", "")
             val fileName = "transactions_$safeTs.csv"
 
-            csvSaver.saveCsv(
-                suggestedFileName = fileName,
-                csvText = text
-            ) { ok, msg ->
-                if (ok) {
-                    banner = "✅ CSV de transacciones guardado"
-                } else {
+            csvSaver.saveCsv(fileName, text) { ok, msg ->
+                if (ok) banner = "✅ CSV de transacciones guardado"
+                else {
                     banner = msg ?: "⚠️ No se pudo guardar. Puedes copiar el CSV."
                     showExportCsv = true
                 }
@@ -242,9 +288,7 @@ fun AppRoot() {
                     modifier = Modifier
                         .fillMaxSize()
                         .background(Color.Gray)
-                        .windowInsetsPadding(
-                            WindowInsets.systemBars.only(WindowInsetsSides.Top + WindowInsetsSides.Bottom)
-                        )
+                        .windowInsetsPadding(WindowInsets.systemBars.only(WindowInsetsSides.Top + WindowInsetsSides.Bottom))
                         .padding(pad),
                     color = Color.Gray
                 ) {
@@ -255,9 +299,7 @@ fun AppRoot() {
 
                     if (isWide) {
                         Row(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(outerPad),
+                            modifier = Modifier.fillMaxSize().padding(outerPad),
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             LeftRail(
@@ -306,15 +348,13 @@ fun AppRoot() {
                                 onUpsertAlert = { rule -> appScope.launch { alertsRepo.upsertRule(rule) } },
                                 onDeleteAlert = { id -> appScope.launch { alertsRepo.removeRule(id) } },
                                 onOpenStrategies = { showStrategiesDialog = true },
-                                onExportPortfolioCsv = onExportCsv, // ahora exporta transacciones
+                                onExportPortfolioCsv = onExportCsv,
                                 statistics = statistics
                             )
                         }
                     } else {
                         MainCard(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(outerPad),
+                            modifier = Modifier.fillMaxSize().padding(outerPad),
                             p = p,
                             sectionGap = sectionGap,
                             innerPadH = innerPadH,
@@ -349,7 +389,7 @@ fun AppRoot() {
                             onUpsertAlert = { rule -> appScope.launch { alertsRepo.upsertRule(rule) } },
                             onDeleteAlert = { id -> appScope.launch { alertsRepo.removeRule(id) } },
                             onOpenStrategies = { showStrategiesDialog = true },
-                            onExportPortfolioCsv = onExportCsv, // ahora exporta transacciones
+                            onExportPortfolioCsv = onExportCsv,
                             statistics = statistics
                         )
                     }
@@ -367,25 +407,6 @@ fun AppRoot() {
                         neutral = p.neutral
                     )
 
-                    if (showCreateAlert) {
-                        CreateAlertDialog(
-                            defaultTicker = selectedTicker.ifBlank { marketState.stocks.firstOrNull()?.ticker.orEmpty() },
-                            tickers = marketState.stocks.map { it.ticker },
-                            surface = p.surface0,
-                            stroke = p.stroke,
-                            textStrong = p.textStrong,
-                            textSoft = p.textSoft,
-                            neutral = p.neutral,
-                            brand = p.brand,
-                            onDismiss = { showCreateAlert = false },
-                            onCreate = { rule ->
-                                appScope.launch { alertsRepo.upsertRule(rule) }
-                                showCreateAlert = false
-                                banner = "✅ Alerta creada: ${rule.ticker} · ${alertUiLabel(rule)} ${fmt2(alertUiThreshold(rule))}"
-                            }
-                        )
-                    }
-
                     if (showStrategiesDialog) {
                         StrategiesConfigDialog(
                             strategiesRepo = strategiesRepo,
@@ -395,7 +416,6 @@ fun AppRoot() {
                         )
                     }
 
-                    // ✅ Fallback: diálogo para copiar el CSV si el guardado se cancela/falla
                     if (showExportCsv) {
                         AlertDialog(
                             onDismissRequest = { showExportCsv = false },
@@ -404,9 +424,7 @@ fun AppRoot() {
                                 OutlinedTextField(
                                     value = csvText,
                                     onValueChange = { csvText = it },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .heightIn(min = 220.dp, max = 360.dp),
+                                    modifier = Modifier.fillMaxWidth().heightIn(min = 220.dp, max = 360.dp),
                                     label = { Text("CSV") },
                                     minLines = 10
                                 )

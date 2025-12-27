@@ -17,6 +17,14 @@ import org.example.project.presentation.state.PortfolioState
  * - BUY: cash suficiente para (gross + comisión)
  * - SELL: holdings suficientes
  * - comisión: 0.5% (0.005)
+ *
+ * ✅ Persistencia (JSON) - contrato:
+ * - Un repo PUEDE soportar persistencia.
+ * - Si no la soporta, debe devolver Result.failure(UnsupportedOperationException).
+ *
+ * Importante:
+ * - El JSON guarda el estado "source of truth" (cash, holdings, transactions, nextTxId...).
+ * - NO guarda datos derivados (positions, PnL), porque se recalculan con el market al cargar.
  */
 interface PortfolioRepository {
 
@@ -35,4 +43,32 @@ interface PortfolioRepository {
     suspend fun getTransactions(): List<Transaction>
     suspend fun exportTransactionsCsv(): String
     suspend fun getSnapshot(): PortfolioSnapshot
+
+    // ============================================================
+    // ✅ Persistencia (JSON)
+    // ============================================================
+
+    /**
+     * Exporta el estado persistible del portfolio (cash, holdings, transactions, contadores...)
+     * a un JSON (string). No incluye datos derivados como PnL/positions.
+     */
+    suspend fun exportStateJson(): Result<String> =
+        Result.failure(UnsupportedOperationException("Persistencia no soportada por este PortfolioRepository"))
+
+    /**
+     * Importa un estado persistible desde JSON y lo aplica como fuente de verdad.
+     * Debe:
+     * - validar el payload,
+     * - restaurar cash/holdings/transactions/ids,
+     * - recalcular portfolioState al finalizar.
+     */
+    suspend fun importStateJson(json: String): Result<Unit> =
+        Result.failure(UnsupportedOperationException("Persistencia no soportada por este PortfolioRepository"))
+
+    /**
+     * Borra el estado persistido y/o resetea a estado inicial (cash inicial, sin posiciones).
+     * Útil para "Reset" desde UI.
+     */
+    suspend fun clearState(): Result<Unit> =
+        Result.failure(UnsupportedOperationException("Persistencia no soportada por este PortfolioRepository"))
 }

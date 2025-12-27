@@ -9,10 +9,14 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import org.example.project.data.repository.PortfolioError.*
 import org.example.project.domain.model.Holding
 import org.example.project.domain.model.PortfolioSnapshot
 import org.example.project.domain.model.PositionSnapshot
+import org.example.project.domain.model.Sector
 import org.example.project.domain.model.Transaction
 import org.example.project.domain.model.TransactionType
 import org.example.project.presentation.state.PortfolioState
@@ -31,9 +35,18 @@ class InMemoryPortfolioRepository(
         private const val EPS = 1e-9
     }
 
+    // JSON config: tolerante a cambios futuros
+    private val json = Json {
+        prettyPrint = true
+        encodeDefaults = true
+        ignoreUnknownKeys = true
+        explicitNulls = false
+    }
+
     private val job: Job? = if (externalScope == null) SupervisorJob() else null
     private val scope: CoroutineScope =
         externalScope ?: CoroutineScope(Dispatchers.Main.immediate + job!!)
+
     private val mutex = Mutex()
 
     private var cash: Double = initialCash
@@ -50,7 +63,7 @@ class InMemoryPortfolioRepository(
             portfolioValue = cash,
             pnlEuro = 0.0,
             pnlPercent = 0.0,
-            profitBars = emptyList() // 👈 NUEVO
+            profitBars = emptyList()
         )
     )
     override val portfolioState: StateFlow<PortfolioState> = _portfolioState
@@ -111,18 +124,7 @@ class InMemoryPortfolioRepository(
         val t = normalizeTicker(ticker)
         if (quantity <= 0) return Result.failure(InvalidQuantity(quantity))
 
-        val owned = mutex.withLock {
-            // 1) Fuente principal: holdingsMap (ticker normalizado)
-            holdingsMap[t]?.quantity
-            // 2) Fallback: snapshot (por si hay cualquier desajuste temporal)
-                ?: buildSnapshotLocked()
-                    .positions
-                    .firstOrNull { it.ticker == t }
-                    ?.quantity
-                ?: 0
-        }
-
-        // ✅ Permitimos vender EXACTAMENTE lo que tienes (owned == quantity es válido)
+        val owned = mutex.withLock { holdingsMap[t]?.quantity ?: 0 }
         if (owned < quantity) return Result.failure(InsufficientHoldings(t, quantity, owned))
 
         val snap = marketRepo.getSnapshot(t) ?: return Result.failure(UnknownTicker(t))
@@ -144,7 +146,6 @@ class InMemoryPortfolioRepository(
         )
     }
 
-
     override suspend fun buy(ticker: String, quantity: Int): Result<Transaction> {
         val t = normalizeTicker(ticker)
         if (quantity <= 0) return Result.failure(InvalidQuantity(quantity))
@@ -163,11 +164,11 @@ class InMemoryPortfolioRepository(
                 return@withLock Result.failure(InsufficientCash(required = net, available = cash))
             }
 
-            // 1) Caja: siempre neto
+            // caja: siempre neto
             cash -= net
             if (cash in -EPS..0.0) cash = 0.0
 
-            // 2) Coste medio: SIEMPRE neto (incluye comisión)
+            // coste medio: siempre neto (incluye comisión)
             val current = holdingsMap[t]
             val newHolding = if (current == null) {
                 val effectivePrice = net / quantity.toDouble()
@@ -175,11 +176,9 @@ class InMemoryPortfolioRepository(
             } else {
                 val oldQty = current.quantity
                 val newQty = oldQty + quantity
-
-                val oldBasis = current.avgBuyPrice * oldQty.toDouble() // ya incluye comisiones previas
-                val newBasis = oldBasis + net                          // añadimos coste neto de esta compra
+                val oldBasis = current.avgBuyPrice * oldQty.toDouble()
+                val newBasis = oldBasis + net
                 val newAvg = newBasis / newQty.toDouble()
-
                 current.copy(quantity = newQty, avgBuyPrice = newAvg)
             }
             holdingsMap[t] = newHolding
@@ -192,10 +191,10 @@ class InMemoryPortfolioRepository(
                 companyName = snap.name,
                 sector = snap.sector,
                 quantity = quantity,
-                pricePerShare = price,     // precio de mercado (bruto), OK para mostrar
+                pricePerShare = price,
                 grossTotal = gross,
                 commission = commission,
-                netTotal = net             // lo que realmente sale de caja
+                netTotal = net
             )
             transactions.add(tx)
 
@@ -203,7 +202,6 @@ class InMemoryPortfolioRepository(
             Result.success(tx)
         }
     }
-
 
     override suspend fun sell(ticker: String, quantity: Int): Result<Transaction> {
         val t = normalizeTicker(ticker)
@@ -214,9 +212,7 @@ class InMemoryPortfolioRepository(
 
             val current = holdingsMap[t]
             val owned = current?.quantity ?: 0
-            if (owned < quantity) {
-                return@withLock Result.failure(InsufficientHoldings(t, quantity, owned))
-            }
+            if (owned < quantity) return@withLock Result.failure(InsufficientHoldings(t, quantity, owned))
 
             val snap = marketRepo.getSnapshot(t) ?: return@withLock Result.failure(UnknownTicker(t))
             val price = snap.currentPrice
@@ -226,15 +222,15 @@ class InMemoryPortfolioRepository(
             val net = gross - commission
 
             val remaining = owned - quantity
-            if (remaining == 0) holdingsMap.remove(t)
-            else holdingsMap[t] = current!!.copy(quantity = remaining)
+            if (remaining == 0) holdingsMap.remove(t) else holdingsMap[t] = current!!.copy(quantity = remaining)
 
             cash += net
+            if (cash in -EPS..0.0) cash = 0.0
 
             val tx = Transaction(
                 id = nextTxId++,
-                timestamp = System.currentTimeMillis(), // ✅ SIMPLE Y FUNCIONA
-                type = TransactionType.SELL, // o SELL
+                timestamp = System.currentTimeMillis(),
+                type = TransactionType.SELL,
                 ticker = t,
                 companyName = snap.name,
                 sector = snap.sector,
@@ -276,12 +272,155 @@ class InMemoryPortfolioRepository(
     override suspend fun getSnapshot(): PortfolioSnapshot =
         mutex.withLock { buildSnapshotLocked() }
 
+    // ============================================================
+    // ✅ PERSISTENCIA (DTO V1)
+    // ============================================================
+
+    @Serializable
+    @SerialName("portfolio_v1")
+    data class PersistedPortfolioV1(
+        val cash: Double,
+        val nextTxId: Int,
+        val holdings: List<PersistedHoldingV1>,
+        val transactions: List<PersistedTransactionV1>
+    )
+
+    @Serializable
+    data class PersistedHoldingV1(
+        val ticker: String,
+        val quantity: Int,
+        val avgBuyPrice: Double
+    )
+
+    @Serializable
+    data class PersistedTransactionV1(
+        val id: Int,
+        val timestamp: Long,
+        val type: String,
+        val ticker: String,
+        val companyName: String? = null,
+        val sector: String? = null,
+        val quantity: Int,
+        val pricePerShare: Double,
+        val grossTotal: Double,
+        val commission: Double,
+        val netTotal: Double
+    )
+
+    suspend fun exportPersistedStateV1(): PersistedPortfolioV1 =
+        mutex.withLock {
+            PersistedPortfolioV1(
+                cash = cash.takeIf { it.isFinite() }?.coerceAtLeast(0.0) ?: 0.0,
+                nextTxId = nextTxId.coerceAtLeast(1),
+                holdings = holdingsMap.values.map { h ->
+                    PersistedHoldingV1(
+                        ticker = normalizeTicker(h.ticker),
+                        quantity = h.quantity.coerceAtLeast(0),
+                        avgBuyPrice = h.avgBuyPrice
+                    )
+                },
+                transactions = transactions.map { tx ->
+                    PersistedTransactionV1(
+                        id = tx.id,
+                        timestamp = tx.timestamp,
+                        type = tx.type.name,
+                        ticker = normalizeTicker(tx.ticker),
+                        companyName = tx.companyName,
+                        sector = tx.sector?.name, // 👈 guardamos como String estable
+                        quantity = tx.quantity,
+                        pricePerShare = tx.pricePerShare,
+                        grossTotal = tx.grossTotal,
+                        commission = tx.commission,
+                        netTotal = tx.netTotal
+                    )
+                }
+            )
+        }
+
+    /** JSON (string) listo para guardar a fichero en Android/Desktop */
+    suspend fun toPersistedJsonV1(): String {
+        val state = exportPersistedStateV1()
+        return json.encodeToString(PersistedPortfolioV1.serializer(), state)
+    }
+
+    /** Restaura desde JSON (string) cargado de fichero en Android/Desktop */
+    suspend fun restoreFromPersistedJsonV1(rawJson: String): Result<Unit> {
+        return runCatching {
+            val state = json.decodeFromString(PersistedPortfolioV1.serializer(), rawJson)
+            importPersistedStateV1(state)
+        }
+    }
+
+    suspend fun importPersistedStateV1(state: PersistedPortfolioV1) {
+        mutex.withLock {
+            holdingsMap.clear()
+            transactions.clear()
+
+            cash = state.cash.takeIf { it.isFinite() }?.coerceAtLeast(0.0) ?: 0.0
+
+            // holdings
+            state.holdings.forEach { h ->
+                val t = normalizeTicker(h.ticker)
+                val qty = h.quantity
+                val avg = h.avgBuyPrice
+                if (t.isBlank()) return@forEach
+                if (qty <= 0) return@forEach
+                if (!avg.isFinite() || avg < 0.0) return@forEach
+                holdingsMap[t] = Holding(ticker = t, quantity = qty, avgBuyPrice = avg)
+            }
+
+            // transactions (con validación y mapeo sector si se puede)
+            val importedTx = state.transactions
+                .mapNotNull { p ->
+                    val t = normalizeTicker(p.ticker)
+                    if (t.isBlank()) return@mapNotNull null
+                    if (p.id <= 0) return@mapNotNull null
+                    if (p.timestamp <= 0L) return@mapNotNull null
+                    if (p.quantity <= 0) return@mapNotNull null
+
+                    val type = runCatching { TransactionType.valueOf(p.type) }.getOrNull() ?: return@mapNotNull null
+
+                    if (!p.pricePerShare.isFinite() || p.pricePerShare < 0.0) return@mapNotNull null
+                    if (!p.grossTotal.isFinite() || p.grossTotal < 0.0) return@mapNotNull null
+                    if (!p.commission.isFinite() || p.commission < 0.0) return@mapNotNull null
+                    if (!p.netTotal.isFinite() || p.netTotal < 0.0) return@mapNotNull null
+
+                    val sectorEnum = p.sector?.let { runCatching { Sector.valueOf(it) }.getOrNull() }
+
+                    runCatching {
+                        Transaction(
+                            id = p.id,
+                            timestamp = p.timestamp,
+                            type = type,
+                            ticker = t,
+                            companyName = p.companyName,
+                            sector = sectorEnum,
+                            quantity = p.quantity,
+                            pricePerShare = p.pricePerShare,
+                            grossTotal = p.grossTotal,
+                            commission = p.commission,
+                            netTotal = p.netTotal
+                        )
+                    }.getOrNull()
+                }
+                .distinctBy { it.id }
+                .sortedBy { it.timestamp }
+
+            transactions.addAll(importedTx)
+
+            val maxId = importedTx.maxOfOrNull { it.id } ?: 0
+            val candidate = maxOf(state.nextTxId, maxId + 1)
+            nextTxId = candidate.coerceAtLeast(1)
+
+            emitPortfolioStateLocked()
+        }
+    }
+
+    // ============================================================
+
     private fun emitPortfolioStateLocked() {
         val snap = buildSnapshotLocked()
 
-        // Barras: P/L (€) por acción
-        // - Ordenamos por valor absoluto para que se vean las más “importantes”
-        // - Limitamos a 12 para que el gráfico no quede ilegible
         val bars = snap.positions
             .map { p -> ProfitBarPoint(p.ticker, p.pnlEuro) }
             .sortedByDescending { abs(it.valueEuro) }
@@ -295,7 +434,7 @@ class InMemoryPortfolioRepository(
             portfolioValue = snap.portfolioValue,
             pnlEuro = snap.pnlEuro,
             pnlPercent = snap.pnlPercent,
-            profitBars = bars // 👈 NUEVO
+            profitBars = bars
         )
     }
 
