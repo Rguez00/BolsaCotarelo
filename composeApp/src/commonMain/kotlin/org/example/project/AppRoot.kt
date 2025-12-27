@@ -186,75 +186,34 @@ fun AppRoot() {
         }
     }
 
-    // ✅ CSV builder
-    fun buildPortfolioCsv(): String {
-        fun esc(s: String): String = "\"" + s.replace("\"", "\"\"") + "\""
-
-        val totalValue = portfolioState.cash + portfolioState.positions.sumOf { it.valueNow }
-        val sb = StringBuilder()
-
-        sb.appendLine("section,key,value")
-        sb.appendLine("summary,generated_at,${esc(kotlinx.datetime.Clock.System.now().toString())}")
-        sb.appendLine("summary,cash_eur,${fmt2(portfolioState.cash)}")
-        sb.appendLine("summary,portfolio_value_eur,${fmt2(portfolioState.portfolioValue)}")
-        sb.appendLine("summary,total_value_eur,${fmt2(totalValue)}")
-        sb.appendLine("summary,pnl_eur,${fmt2(portfolioState.pnlEuro)}")
-        sb.appendLine("summary,pnl_percent,${fmt2(portfolioState.pnlPercent)}")
-        sb.appendLine()
-
-        sb.appendLine("ticker,quantity,invested_eur,value_now_eur,pnl_eur,pnl_percent")
-        for (pos in portfolioState.positions) {
-            sb.appendLine(
-                listOf(
-                    esc(pos.ticker),
-                    pos.quantity.toString(),
-                    fmt2(pos.invested),
-                    fmt2(pos.valueNow),
-                    fmt2(pos.pnlEuro),
-                    fmt2(pos.pnlPercent)
-                ).joinToString(",")
-            )
-        }
-        sb.appendLine()
-
-        sb.appendLine("tx_id,type,ticker,quantity,net_total_eur")
-        for (tx in portfolioState.transactions) {
-            sb.appendLine(
-                listOf(
-                    tx.id.toString(),
-                    esc(tx.type.name),
-                    esc(tx.ticker),
-                    tx.quantity.toString(),
-                    fmt2(tx.netTotal)
-                ).joinToString(",")
-            )
-        }
-
-        return sb.toString()
-    }
-
-    // ✅ Export: intenta guardar archivo real; si se cancela/falla, abre diálogo para copiar
+    // ✅ Export TRANSACTIONS CSV: guarda archivo real; si se cancela/falla, abre diálogo para copiar
     val onExportCsv: () -> Unit = {
-        val text = buildPortfolioCsv()
-        csvText = text
+        appScope.launch {
+            val text = runCatching { portfolioRepo.exportTransactionsCsv() }
+                .getOrElse { e ->
+                    banner = "⚠️ Error generando CSV: ${e.message ?: "desconocido"}"
+                    return@launch
+                }
 
-        val rawTs = kotlinx.datetime.Clock.System.now().toString()
-        val safeTs = rawTs
-            .replace(":", "-")
-            .replace(".", "-")
-            .replace("Z", "")
-        val fileName = "portfolio_$safeTs.csv"
-
-        csvSaver.saveCsv(
-            suggestedFileName = fileName,
             csvText = text
-        ) { ok, msg ->
-            if (ok) {
-                banner = "✅ CSV guardado"
-            } else {
-                // Cancelado o error -> fallback para copiar
-                banner = msg ?: "⚠️ No se pudo guardar. Puedes copiar el CSV."
-                showExportCsv = true
+
+            val rawTs = kotlinx.datetime.Clock.System.now().toString()
+            val safeTs = rawTs
+                .replace(":", "-")
+                .replace(".", "-")
+                .replace("Z", "")
+            val fileName = "transactions_$safeTs.csv"
+
+            csvSaver.saveCsv(
+                suggestedFileName = fileName,
+                csvText = text
+            ) { ok, msg ->
+                if (ok) {
+                    banner = "✅ CSV de transacciones guardado"
+                } else {
+                    banner = msg ?: "⚠️ No se pudo guardar. Puedes copiar el CSV."
+                    showExportCsv = true
+                }
             }
         }
     }
@@ -347,7 +306,7 @@ fun AppRoot() {
                                 onUpsertAlert = { rule -> appScope.launch { alertsRepo.upsertRule(rule) } },
                                 onDeleteAlert = { id -> appScope.launch { alertsRepo.removeRule(id) } },
                                 onOpenStrategies = { showStrategiesDialog = true },
-                                onExportPortfolioCsv = onExportCsv,
+                                onExportPortfolioCsv = onExportCsv, // ahora exporta transacciones
                                 statistics = statistics
                             )
                         }
@@ -390,7 +349,7 @@ fun AppRoot() {
                             onUpsertAlert = { rule -> appScope.launch { alertsRepo.upsertRule(rule) } },
                             onDeleteAlert = { id -> appScope.launch { alertsRepo.removeRule(id) } },
                             onOpenStrategies = { showStrategiesDialog = true },
-                            onExportPortfolioCsv = onExportCsv,
+                            onExportPortfolioCsv = onExportCsv, // ahora exporta transacciones
                             statistics = statistics
                         )
                     }
@@ -440,7 +399,7 @@ fun AppRoot() {
                     if (showExportCsv) {
                         AlertDialog(
                             onDismissRequest = { showExportCsv = false },
-                            title = { Text("Export Portfolio a CSV") },
+                            title = { Text("Exportar transacciones a CSV") },
                             text = {
                                 OutlinedTextField(
                                     value = csvText,

@@ -1,5 +1,8 @@
 package org.example.project
 
+import kotlinx.datetime.Instant
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -497,7 +500,8 @@ internal fun MainCard(
                                 ) {
                                     items(items = txs, key = { it.id }) { tx ->
                                         Card(colors = CardDefaults.cardColors(containerColor = p.surface2)) {
-                                            Column(Modifier.padding(12.dp)) {
+                                            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+
                                                 Text(
                                                     "ID ${tx.id} · ${tx.type} · ${tx.ticker} x${tx.quantity}",
                                                     color = p.textStrong,
@@ -506,6 +510,24 @@ internal fun MainCard(
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis
                                                 )
+
+                                                Text(
+                                                    "Fecha: ${fmtDateTime(tx.timestamp)}",
+                                                    color = p.textMuted,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+
+                                                // ✅ Comisión visible (requisito)
+                                                Text(
+                                                    "Bruto: ${fmt2(tx.grossTotal)} € · Comisión: ${fmt2(tx.commission)} €",
+                                                    color = p.textSoft,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+
                                                 Text(
                                                     "Neto: ${fmt2(tx.netTotal)} €",
                                                     color = p.textSoft,
@@ -516,6 +538,7 @@ internal fun MainCard(
                                             }
                                         }
                                     }
+
                                 }
                             }
                         }
@@ -865,6 +888,20 @@ internal fun MainCard(
 /* =========================
    CHARTS helpers
    ========================= */
+private fun fmtDateTime(tsMillis: Long): String {
+    return try {
+        val dt = Instant.fromEpochMilliseconds(tsMillis).toLocalDateTime(TimeZone.currentSystemDefault())
+        val y = dt.year.toString().padStart(4, '0')
+        val m = dt.monthNumber.toString().padStart(2, '0')
+        val d = dt.dayOfMonth.toString().padStart(2, '0')
+        val hh = dt.hour.toString().padStart(2, '0')
+        val mm = dt.minute.toString().padStart(2, '0')
+        "$y-$m-$d $hh:$mm"
+    } catch (_: Throwable) {
+        tsMillis.toString()
+    }
+}
+
 
 @Composable
 private fun ChartCard(

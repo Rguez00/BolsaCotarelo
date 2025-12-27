@@ -17,12 +17,9 @@ class PortfolioViewModel(
     private val externalScope: CoroutineScope? = null,
 
     /**
-     * ✅ Nuevo:
-     * Proveedor de “¿se puede tradear ahora mismo?”
+     * ✅ Proveedor de “¿se puede tradear ahora mismo?”
      * - true => mercado abierto y NO pausado
      * - false => cerrado o pausado
-     *
-     * Se lo pasas desde App() leyendo engine.marketState.value.
      */
     private val canTradeProvider: () -> Boolean = { true }
 ) {
@@ -58,7 +55,7 @@ class PortfolioViewModel(
     var error by mutableStateOf<String?>(null)
         private set
 
-    // Busy SOLO para confirm (no para preview), así no “molesta” mientras escribes.
+    // Busy SOLO para confirm (no para preview)
     var isBusy by mutableStateOf(false)
         private set
 
@@ -72,10 +69,7 @@ class PortfolioViewModel(
 
     fun openTrade(ticker: String, mode: Mode) {
         // ✅ Guardia: si mercado NO disponible, NO abrimos el diálogo
-        if (!canTradeProvider()) {
-            // opcional: si quieres mostrar algo fuera del dialog, aquí podrías exponer otro estado global
-            return
-        }
+        if (!canTradeProvider()) return
 
         this.ticker = normalizeTicker(ticker)
         this.mode = mode
@@ -99,7 +93,7 @@ class PortfolioViewModel(
         confirmJob?.cancel()
         confirmJob = null
 
-        // Por si acaso (aunque el finally lo cubriría)
+        // Por si acaso
         isBusy = false
         error = null
         preview = null
@@ -108,7 +102,9 @@ class PortfolioViewModel(
 
     fun updateQuantityText(text: String) {
         quantityText = text
-        lastTx = null // opcional: al cambiar cantidad, “limpia” el último OK
+        lastTx = null
+        // ✅ IMPORTANTE: al editar, limpiamos error viejo (evita “error fantasma”)
+        error = null
         refreshPreview()
     }
 
@@ -171,7 +167,6 @@ class PortfolioViewModel(
             return
         }
 
-        // Si está vacío, no hacemos nada (el botón ya debería estar deshabilitado)
         if (quantityText.isBlank()) return
 
         val qty = parseQuantityOrNull(quantityText)
@@ -195,7 +190,7 @@ class PortfolioViewModel(
 
         confirmJob = scope.launch {
             try {
-                // ✅ Volvemos a comprobar justo antes de ejecutar (por si cambió en medio)
+                // ✅ Recheck justo antes de ejecutar
                 if (!canTradeProvider()) {
                     lastTx = null
                     preview = null
@@ -212,19 +207,19 @@ class PortfolioViewModel(
                     onSuccess = { tx ->
                         lastTx = tx
                         error = null
-                        // Refresca preview para reflejar nuevo cash/holdings tras la operación
-                        refreshPreview()
+                        // ✅ CLAVE: NO refrescar preview automáticamente tras éxito
+                        // Porque en SELL (si vendes todo) refrescar provoca InsufficientHoldings y “error fantasma”.
+                        preview = null
                     },
                     onFailure = { e ->
                         lastTx = null
                         preview = null
                         error = e.message ?: "Error"
-                        // Recalcula preview para que el usuario vea el estado actual
+                        // Aquí sí tiene sentido recalcular preview para que el usuario vea el estado actual
                         refreshPreview()
                     }
                 )
             } finally {
-                // ✅ Pase lo que pase (éxito, fallo o cancelación), volvemos a no-busy.
                 isBusy = false
             }
         }
