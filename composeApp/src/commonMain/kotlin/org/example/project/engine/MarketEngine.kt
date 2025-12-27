@@ -6,6 +6,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.StateFlow
+import org.example.project.core.market.MarketClock
 import org.example.project.data.repository.MarketRepository
 import org.example.project.data.repository.PortfolioRepository
 import org.example.project.domain.strategy.RepoStrategyMarketBridge
@@ -45,6 +46,9 @@ class MarketEngine(
     // 1 job por ticker (clave: ticker normalizado)
     private val updaterJobs: MutableMap<String, Job> = mutableMapOf()
 
+    // Reloj del mercado
+    private val marketClock = MarketClock(marketRepo, workerScope)
+
     // Jobs globales
     private var trendJob: Job? = null
     private var newsJob: Job? = null
@@ -64,6 +68,11 @@ class MarketEngine(
     // START / STOP
     // ============================================================
 
+
+    fun start() {
+        marketClock.start()
+        startAllTickers()
+    }
     fun startAllTickers() {
         if (!engineJob.isActive) return
         controlScope.launch {
@@ -101,7 +110,6 @@ class MarketEngine(
             stopAllTickersLocked()
         }
     }
-
     /**
      * Para TODO (tickers + generators + strategies) sin cerrar el engine.
      * Útil si quisieras “resetear” en runtime.
@@ -123,6 +131,7 @@ class MarketEngine(
         if (!engineJob.isActive) return
 
         controlScope.launch {
+            marketClock.stop()  // ← AÑADE ESTO
             stopAllTickersLocked()
             stopGlobalGeneratorsLocked()
             stopStrategiesLocked()
@@ -234,7 +243,6 @@ class MarketEngine(
 
     private fun startStrategiesIfNeededLocked() {
         if (strategyEngine != null) return
-
         strategyEngine = StrategyEngine(
             market = RepoStrategyMarketBridge(marketRepo),
             portfolio = RepoStrategyPortfolioBridge(portfolioRepo),

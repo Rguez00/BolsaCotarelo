@@ -139,8 +139,9 @@ fun AppRoot() {
         )
     }
 
-    LaunchedEffect(Unit) { engine.startAllTickers() }
-
+    LaunchedEffect(Unit) {
+        engine.start()  // ← ESTO es lo que falta
+    }
     // ✅ Close (best-effort)
     DisposableEffect(Unit) {
         onDispose {

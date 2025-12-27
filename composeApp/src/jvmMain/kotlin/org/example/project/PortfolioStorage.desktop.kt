@@ -29,6 +29,7 @@ actual fun rememberPortfolioStorage(fileName: String): PortfolioStorage {
                 tmpFile.writeText(json, Charsets.UTF_8)
                 if (t.exists()) t.delete()
                 tmpFile.renameTo(t)
+                Unit
             }
         }
     }
