@@ -17,15 +17,14 @@ class PortfolioViewModel(
     private val externalScope: CoroutineScope? = null,
 
     /**
-     * ✅ Proveedor de “¿se puede tradear ahora mismo?”
-     * - true => mercado abierto y NO pausado
-     * - false => cerrado o pausado
+     * ✅ Hook para persistir al confirmar una operación (BUY/SELL) con éxito.
+     * - En AppRoot le pasamos una lambda suspend que escribe el JSON.
      */
+    private val onPersistNow: (suspend () -> Unit)? = null,
+
     private val canTradeProvider: () -> Boolean = { true }
 ) {
     private val vmJob = SupervisorJob()
-
-    // Main.immediate va bien para Compose (Android/Desktop) si tenéis dispatcher Main configurado.
     private val scope: CoroutineScope =
         externalScope ?: CoroutineScope(Dispatchers.Main.immediate + vmJob)
 
@@ -33,7 +32,6 @@ class PortfolioViewModel(
 
     enum class Mode { BUY, SELL }
 
-    // UI state
     var dialogOpen by mutableStateOf(false)
         private set
 
@@ -55,20 +53,13 @@ class PortfolioViewModel(
     var error by mutableStateOf<String?>(null)
         private set
 
-    // Busy SOLO para confirm (no para preview)
     var isBusy by mutableStateOf(false)
         private set
 
-    // Jobs para evitar resultados fuera de orden
     private var previewJob: Job? = null
     private var confirmJob: Job? = null
 
-    // ============================================================
-    // API
-    // ============================================================
-
     fun openTrade(ticker: String, mode: Mode) {
-        // ✅ Guardia: si mercado NO disponible, NO abrimos el diálogo
         if (!canTradeProvider()) return
 
         this.ticker = normalizeTicker(ticker)
@@ -86,14 +77,8 @@ class PortfolioViewModel(
 
     fun closeTrade() {
         dialogOpen = false
-
-        previewJob?.cancel()
-        previewJob = null
-
-        confirmJob?.cancel()
-        confirmJob = null
-
-        // Por si acaso
+        previewJob?.cancel(); previewJob = null
+        confirmJob?.cancel(); confirmJob = null
         isBusy = false
         error = null
         preview = null
@@ -103,7 +88,6 @@ class PortfolioViewModel(
     fun updateQuantityText(text: String) {
         quantityText = text
         lastTx = null
-        // ✅ IMPORTANTE: al editar, limpiamos error viejo (evita “error fantasma”)
         error = null
         refreshPreview()
     }
@@ -111,16 +95,13 @@ class PortfolioViewModel(
     fun refreshPreview() {
         if (!dialogOpen) return
 
-        // ✅ Si el mercado se cierra/pausa mientras el diálogo está abierto:
         if (!canTradeProvider()) {
-            previewJob?.cancel()
-            previewJob = null
+            previewJob?.cancel(); previewJob = null
             preview = null
             error = "Mercado no disponible (cerrado o pausado)"
             return
         }
 
-        // ✅ Estado neutro: si está vacío, NO mostramos error y NO preview.
         if (quantityText.isBlank()) {
             preview = null
             error = null
@@ -134,7 +115,6 @@ class PortfolioViewModel(
             return
         }
 
-        // Cancelamos el preview anterior para que no pise el último
         previewJob?.cancel()
         previewJob = scope.launch {
             val result = when (mode) {
@@ -156,10 +136,8 @@ class PortfolioViewModel(
     }
 
     fun confirm() {
-        if (!dialogOpen) return
-        if (isBusy) return
+        if (!dialogOpen || isBusy) return
 
-        // ✅ Guardia extra: si mercado NO disponible, no confirmamos
         if (!canTradeProvider()) {
             lastTx = null
             preview = null
@@ -177,11 +155,8 @@ class PortfolioViewModel(
             return
         }
 
-        // Evita que un preview “antiguo” pise el estado tras confirmar
         previewJob?.cancel()
         previewJob = null
-
-        // Cancela confirm anterior si existiese (por seguridad)
         confirmJob?.cancel()
 
         isBusy = true
@@ -190,7 +165,6 @@ class PortfolioViewModel(
 
         confirmJob = scope.launch {
             try {
-                // ✅ Recheck justo antes de ejecutar
                 if (!canTradeProvider()) {
                     lastTx = null
                     preview = null
@@ -207,15 +181,15 @@ class PortfolioViewModel(
                     onSuccess = { tx ->
                         lastTx = tx
                         error = null
-                        // ✅ CLAVE: NO refrescar preview automáticamente tras éxito
-                        // Porque en SELL (si vendes todo) refrescar provoca InsufficientHoldings y “error fantasma”.
                         preview = null
+
+                        // ✅ PERSISTE YA MISMO (lo más fiable contra “swipe kill”)
+                        runCatching { onPersistNow?.invoke() }.onFailure { it.printStackTrace() }
                     },
                     onFailure = { e ->
                         lastTx = null
                         preview = null
                         error = e.message ?: "Error"
-                        // Aquí sí tiene sentido recalcular preview para que el usuario vea el estado actual
                         refreshPreview()
                     }
                 )
@@ -231,13 +205,6 @@ class PortfolioViewModel(
         if (externalScope == null) vmJob.cancel()
     }
 
-    // ============================================================
-    // Helpers
-    // ============================================================
-
-    private fun normalizeTicker(raw: String): String =
-        raw.trim().uppercase()
-
-    private fun parseQuantityOrNull(text: String): Int? =
-        text.trim().toIntOrNull()
+    private fun normalizeTicker(raw: String): String = raw.trim().uppercase()
+    private fun parseQuantityOrNull(text: String): Int? = text.trim().toIntOrNull()
 }

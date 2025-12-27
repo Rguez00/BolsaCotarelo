@@ -1,29 +1,38 @@
 package org.example.project
 
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.launch
 
 @Composable
 actual fun PlatformSaveOnStop(
     enabled: Boolean,
-    onSave: suspend () -> Unit
+    onStop: suspend () -> Unit
 ) {
-    val owner = LocalLifecycleOwner.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
-    val latestOnSave by rememberUpdatedState(onSave)
 
-    DisposableEffect(owner, enabled) {
-        if (!enabled) return@DisposableEffect onDispose { }
+    val latestEnabled = rememberUpdatedState(enabled)
+    val latestOnStop = rememberUpdatedState(onStop)
 
-        val obs = LifecycleEventObserver { _, event ->
+    DisposableEffect(lifecycleOwner, enabled) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (!latestEnabled.value) return@LifecycleEventObserver
+
             if (event == Lifecycle.Event.ON_STOP) {
-                scope.launch { latestOnSave() }
+                scope.launch {
+                    runCatching { latestOnStop.value() }
+                        .onFailure { it.printStackTrace() }
+                }
             }
         }
-        owner.lifecycle.addObserver(obs)
-        onDispose { owner.lifecycle.removeObserver(obs) }
+
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 }

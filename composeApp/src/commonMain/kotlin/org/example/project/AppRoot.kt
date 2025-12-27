@@ -10,13 +10,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import org.example.project.core.config.InitialData
-import org.example.project.core.util.fmt2
 import org.example.project.data.repository.InMemoryAlertsRepository
 import org.example.project.data.repository.InMemoryMarketRepository
 import org.example.project.data.repository.InMemoryPortfolioRepository
@@ -36,7 +35,6 @@ fun AppRoot() {
     val appScope = rememberCoroutineScope()
     val clipboard = LocalClipboardManager.current
 
-    // ✅ Persistencia JSON (Android + Desktop)
     val jsonStore = rememberJsonStore("portfolio.json")
     val json = remember {
         Json {
@@ -45,9 +43,10 @@ fun AppRoot() {
             encodeDefaults = true
         }
     }
-    var hasLoaded by remember { mutableStateOf(false) }
 
-    // ✅ CSV saver
+    var hasLoaded by remember { mutableStateOf(false) }
+    var lastWritten by remember { mutableStateOf<String?>(null) }
+
     val csvSaver = rememberCsvFileSaver()
 
     val marketRepo = remember { InMemoryMarketRepository(InitialData.defaultStocks()) }
@@ -64,9 +63,25 @@ fun AppRoot() {
         )
     }
 
-    // ✅ LOAD al iniciar
+    suspend fun persistNow() {
+        if (!hasLoaded) return
+
+        val persisted = portfolioRepo.exportPersistedStateV1()
+        val text = json.encodeToString(
+            InMemoryPortfolioRepository.PersistedPortfolioV1.serializer(),
+            persisted
+        )
+
+        if (text != lastWritten) {
+            jsonStore.write(text)
+            lastWritten = text
+        }
+    }
+
+    // ✅ LOAD
     LaunchedEffect(Unit) {
         val raw = runCatching { jsonStore.read() }.getOrNull()
+
         if (!raw.isNullOrBlank()) {
             runCatching {
                 val state = json.decodeFromString(
@@ -74,41 +89,31 @@ fun AppRoot() {
                     raw
                 )
                 portfolioRepo.importPersistedStateV1(state)
+                lastWritten = raw
             }.onFailure { it.printStackTrace() }
         }
+
         hasLoaded = true
     }
 
-    // ✅ AUTO-SAVE con debounce (cuando cambie el estado)
+    // ✅ AUTO-SAVE: cada cambio de estado => persistencia en IO
     LaunchedEffect(Unit) {
         snapshotFlow { portfolioRepo.portfolioState.value }
-            .debounce(800)
             .collectLatest {
                 if (!hasLoaded) return@collectLatest
-                runCatching {
-                    val persisted = portfolioRepo.exportPersistedStateV1()
-                    val text = json.encodeToString(
-                        InMemoryPortfolioRepository.PersistedPortfolioV1.serializer(),
-                        persisted
-                    )
-                    jsonStore.write(text)
-                }.onFailure { it.printStackTrace() }
+                appScope.launch(Dispatchers.IO) {
+                    runCatching { persistNow() }
+                        .onFailure { it.printStackTrace() }
+                }
             }
     }
 
-    // ✅ Guardado “sí o sí” cuando la app pasa a background (solo Android, en Desktop no hace nada)
+    // ✅ Guardar al ir a background (Android)
     PlatformSaveOnStop(enabled = hasLoaded) {
-        runCatching {
-            val persisted = portfolioRepo.exportPersistedStateV1()
-            val text = json.encodeToString(
-                InMemoryPortfolioRepository.PersistedPortfolioV1.serializer(),
-                persisted
-            )
-            jsonStore.write(text)
-        }.onFailure { it.printStackTrace() }
+        persistNow()
     }
 
-    // ✅ Reglas por defecto (si las quieres)
+    // ✅ Reglas por defecto
     LaunchedEffect(Unit) {
         strategiesRepo.upsert(
             StrategyRule.AutoBuyDip(
@@ -139,20 +144,13 @@ fun AppRoot() {
 
     LaunchedEffect(Unit) { engine.startAllTickers() }
 
+    // ✅ Close (best-effort)
     DisposableEffect(Unit) {
         onDispose {
-            // ✅ Guardado final best-effort (por si se cierra desde Desktop o similar)
             runBlocking {
-                runCatching {
-                    val persisted = portfolioRepo.exportPersistedStateV1()
-                    val text = json.encodeToString(
-                        InMemoryPortfolioRepository.PersistedPortfolioV1.serializer(),
-                        persisted
-                    )
-                    jsonStore.write(text)
-                }.onFailure { it.printStackTrace() }
+                runCatching { persistNow() }
+                    .onFailure { it.printStackTrace() }
             }
-
             engine.close()
             portfolioRepo.close()
             portfolioVm.close()
@@ -166,7 +164,7 @@ fun AppRoot() {
 
     val canTrade = marketState.isOpen && !marketState.isPaused
 
-    // ---------------- UI STATE ----------------
+    // UI STATE
     var tabKey by rememberSaveable { mutableStateOf(AppTab.MARKET.name) }
     val tab = AppTab.valueOf(tabKey)
 
@@ -288,7 +286,9 @@ fun AppRoot() {
                     modifier = Modifier
                         .fillMaxSize()
                         .background(Color.Gray)
-                        .windowInsetsPadding(WindowInsets.systemBars.only(WindowInsetsSides.Top + WindowInsetsSides.Bottom))
+                        .windowInsetsPadding(
+                            WindowInsets.systemBars.only(WindowInsetsSides.Top + WindowInsetsSides.Bottom)
+                        )
                         .padding(pad),
                     color = Color.Gray
                 ) {
@@ -438,9 +438,7 @@ fun AppRoot() {
                                     }
                                 ) { Text("Copiar") }
                             },
-                            dismissButton = {
-                                TextButton(onClick = { showExportCsv = false }) { Text("Cerrar") }
-                            }
+                            dismissButton = { TextButton(onClick = { showExportCsv = false }) { Text("Cerrar") } }
                         )
                     }
                 }

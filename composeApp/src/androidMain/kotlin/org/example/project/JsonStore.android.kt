@@ -11,10 +11,7 @@ import java.io.File
 @Composable
 actual fun rememberJsonStore(fileName: String): JsonStore {
     val context = LocalContext.current.applicationContext
-
-    return remember(fileName) {
-        AndroidJsonStore(context, fileName)
-    }
+    return remember(fileName) { AndroidJsonStore(context, fileName) }
 }
 
 private class AndroidJsonStore(
@@ -35,12 +32,22 @@ private class AndroidJsonStore(
         val target = targetFile()
         val tmp = tmpFile()
 
-        // 1) escribir a tmp
+        // 1) escribe tmp
         tmp.writeText(text, Charsets.UTF_8)
 
-        // 2) reemplazo best-effort
-        if (target.exists()) target.delete()
-        tmp.renameTo(target)
+        // 2) intenta rename atómico
+        if (tmp.renameTo(target)) return@withContext Unit
+
+        // 3) fallback: copia + replace
+        runCatching {
+            if (target.exists()) target.delete()
+            tmp.copyTo(target, overwrite = true)
+            tmp.delete()
+        }.getOrElse {
+            // último intento: escribir directo
+            target.writeText(text, Charsets.UTF_8)
+            tmp.delete()
+        }
 
         Unit
     }
