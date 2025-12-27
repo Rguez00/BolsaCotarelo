@@ -26,7 +26,7 @@ import kotlin.math.roundToLong
 
 class InMemoryPortfolioRepository(
     private val marketRepo: MarketRepository,
-    initialCash: Double = 10_000.0,
+    private val initialCash: Double = 10_000.0, // ✅ ahora propiedad
     private val externalScope: CoroutineScope? = null
 ) : PortfolioRepository {
 
@@ -273,6 +273,27 @@ class InMemoryPortfolioRepository(
         mutex.withLock { buildSnapshotLocked() }
 
     // ============================================================
+    // ✅ PortfolioRepository: PERSISTENCIA JSON (contrato)
+    // ============================================================
+
+    override suspend fun exportStateJson(): Result<String> =
+        runCatching { toPersistedJsonV1() }
+
+    override suspend fun importStateJson(json: String): Result<Unit> =
+        restoreFromPersistedJsonV1(json)
+
+    override suspend fun clearState(): Result<Unit> =
+        runCatching {
+            mutex.withLock {
+                cash = initialCash
+                holdingsMap.clear()
+                transactions.clear()
+                nextTxId = 1
+                emitPortfolioStateLocked()
+            }
+        }
+
+    // ============================================================
     // ✅ PERSISTENCIA (DTO V1)
     // ============================================================
 
@@ -326,7 +347,7 @@ class InMemoryPortfolioRepository(
                         type = tx.type.name,
                         ticker = normalizeTicker(tx.ticker),
                         companyName = tx.companyName,
-                        sector = tx.sector?.name, // 👈 guardamos como String estable
+                        sector = tx.sector?.name,
                         quantity = tx.quantity,
                         pricePerShare = tx.pricePerShare,
                         grossTotal = tx.grossTotal,
@@ -369,7 +390,7 @@ class InMemoryPortfolioRepository(
                 holdingsMap[t] = Holding(ticker = t, quantity = qty, avgBuyPrice = avg)
             }
 
-            // transactions (con validación y mapeo sector si se puede)
+            // transactions
             val importedTx = state.transactions
                 .mapNotNull { p ->
                     val t = normalizeTicker(p.ticker)
@@ -387,21 +408,19 @@ class InMemoryPortfolioRepository(
 
                     val sectorEnum = p.sector?.let { runCatching { Sector.valueOf(it) }.getOrNull() }
 
-                    runCatching {
-                        Transaction(
-                            id = p.id,
-                            timestamp = p.timestamp,
-                            type = type,
-                            ticker = t,
-                            companyName = p.companyName,
-                            sector = sectorEnum,
-                            quantity = p.quantity,
-                            pricePerShare = p.pricePerShare,
-                            grossTotal = p.grossTotal,
-                            commission = p.commission,
-                            netTotal = p.netTotal
-                        )
-                    }.getOrNull()
+                    Transaction(
+                        id = p.id,
+                        timestamp = p.timestamp,
+                        type = type,
+                        ticker = t,
+                        companyName = p.companyName,
+                        sector = sectorEnum,
+                        quantity = p.quantity,
+                        pricePerShare = p.pricePerShare,
+                        grossTotal = p.grossTotal,
+                        commission = p.commission,
+                        netTotal = p.netTotal
+                    )
                 }
                 .distinctBy { it.id }
                 .sortedBy { it.timestamp }

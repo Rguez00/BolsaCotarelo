@@ -7,38 +7,99 @@ import org.example.project.domain.model.Transaction
 /**
  * Estado “live” del portfolio para la UI.
  *
+ * Fuente de verdad:
+ * - Este estado SOLO lo emite el repositorio.
+ * - La UI nunca recalcula valores financieros.
+ *
  * Importante:
  * - holdings: base para operar (qty + avgBuyPrice)
- * - positions: enriquecido para UI (precio actual + PnL por ticker)
- * - portfolioValue / pnl*: calculados en repo (fuente de verdad)
+ * - positions: datos enriquecidos para UI (precio actual + PnL)
+ * - portfolioValue / pnl*: ya calculados en el repo
  *
  * Nota:
- * - Este estado es “de presentación”, no de persistencia.
+ * - Estado de presentación, NO persistente.
  */
 data class PortfolioState(
+
+    // =========================
+    // BASE
+    // =========================
+
+    /** Efectivo disponible */
     val cash: Double = 10_000.0,
 
+    /** Holdings base (fuente para operar) */
     val holdings: List<Holding> = emptyList(),
+
+    /** Posiciones enriquecidas para UI */
     val positions: List<PositionSnapshot> = emptyList(),
 
+    /** Historial completo de transacciones */
     val transactions: List<Transaction> = emptyList(),
 
-    // cash + holdingsValue (lo calcula el repo)
+    // =========================
+    // AGREGADOS (calculados en repo)
+    // =========================
+
+    /** Valor total del portfolio: cash + holdingsValue */
     val portfolioValue: Double = cash,
 
-    // PnL global SOLO holdings: holdingsValue - totalInvested (lo calcula el repo)
+    /** Beneficio/pérdida TOTAL de holdings (no incluye cash) */
     val pnlEuro: Double = 0.0,
+
+    /** Beneficio/pérdida TOTAL en porcentaje */
     val pnlPercent: Double = 0.0,
+
+    /** Datos para gráfico de barras (top movers) */
     val profitBars: List<ProfitBarPoint> = emptyList()
 
 ) {
-    init {
-        require(cash.isFinite()) { "PortfolioState.cash debe ser finito" }
-        require(portfolioValue.isFinite()) { "PortfolioState.portfolioValue debe ser finito" }
-        require(pnlEuro.isFinite()) { "PortfolioState.pnlEuro debe ser finito" }
-        require(pnlPercent.isFinite()) { "PortfolioState.pnlPercent debe ser finito" }
 
-        // cash puede ser 0, pero no debería ser negativo (el repo ya lo evita con EPS).
-        require(cash >= -1e-6) { "PortfolioState.cash no debería ser negativo: $cash" }
+    // =========================
+    // FLAGS DE UI (DERIVADOS)
+    // =========================
+
+    /** ¿Hay alguna posición abierta? */
+    val hasPositions: Boolean
+        get() = positions.isNotEmpty()
+
+    /** ¿Se ha realizado alguna transacción? */
+    val hasTransactions: Boolean
+        get() = transactions.isNotEmpty()
+
+    /** ¿El portfolio está completamente vacío? */
+    val isEmpty: Boolean
+        get() = cash <= 1e-6 && positions.isEmpty()
+
+    /** ¿El PnL es positivo? */
+    val isProfit: Boolean
+        get() = pnlEuro > 1e-6
+
+    /** ¿El PnL es negativo? */
+    val isLoss: Boolean
+        get() = pnlEuro < -1e-6
+
+    // =========================
+    // VALIDACIONES DE SEGURIDAD
+    // =========================
+
+    init {
+        require(cash.isFinite()) {
+            "PortfolioState.cash debe ser finito (actual: $cash)"
+        }
+        require(portfolioValue.isFinite()) {
+            "PortfolioState.portfolioValue debe ser finito (actual: $portfolioValue)"
+        }
+        require(pnlEuro.isFinite()) {
+            "PortfolioState.pnlEuro debe ser finito (actual: $pnlEuro)"
+        }
+        require(pnlPercent.isFinite()) {
+            "PortfolioState.pnlPercent debe ser finito (actual: $pnlPercent)"
+        }
+
+        // El repo ya evita cash negativo, pero protegemos la UI
+        require(cash >= -1e-6) {
+            "PortfolioState.cash no debería ser negativo: $cash"
+        }
     }
 }

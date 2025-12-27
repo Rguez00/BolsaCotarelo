@@ -14,7 +14,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-import kotlinx.serialization.json.Json
 import org.example.project.core.config.InitialData
 import org.example.project.data.repository.InMemoryAlertsRepository
 import org.example.project.data.repository.InMemoryMarketRepository
@@ -25,24 +24,21 @@ import org.example.project.domain.strategy.DipReference
 import org.example.project.domain.strategy.InMemoryStrategiesRepository
 import org.example.project.domain.strategy.StrategyRule
 import org.example.project.engine.MarketEngine
+import org.example.project.platform.rememberPortfolioJsonFileIO
 import org.example.project.presentation.strategies.StrategiesConfigDialog
+import org.example.project.presentation.ui.PortfolioStateMenuButton
 import org.example.project.presentation.ui.TradeDialog
 import org.example.project.presentation.vm.PortfolioViewModel
 import kotlin.math.abs
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppRoot() {
     val appScope = rememberCoroutineScope()
     val clipboard = LocalClipboardManager.current
 
     val jsonStore = rememberJsonStore("portfolio.json")
-    val json = remember {
-        Json {
-            prettyPrint = true
-            ignoreUnknownKeys = true
-            encodeDefaults = true
-        }
-    }
+    val jsonFileIO = rememberPortfolioJsonFileIO()
 
     var hasLoaded by remember { mutableStateOf(false) }
     var lastWritten by remember { mutableStateOf<String?>(null) }
@@ -66,31 +62,21 @@ fun AppRoot() {
     suspend fun persistNow() {
         if (!hasLoaded) return
 
-        val persisted = portfolioRepo.exportPersistedStateV1()
-        val text = json.encodeToString(
-            InMemoryPortfolioRepository.PersistedPortfolioV1.serializer(),
-            persisted
-        )
-
+        val text = portfolioRepo.exportStateJson().getOrNull() ?: return
         if (text != lastWritten) {
             jsonStore.write(text)
             lastWritten = text
         }
     }
 
-    // ✅ LOAD
+    // ✅ LOAD (usa el contrato importStateJson)
     LaunchedEffect(Unit) {
         val raw = runCatching { jsonStore.read() }.getOrNull()
 
         if (!raw.isNullOrBlank()) {
-            runCatching {
-                val state = json.decodeFromString(
-                    InMemoryPortfolioRepository.PersistedPortfolioV1.serializer(),
-                    raw
-                )
-                portfolioRepo.importPersistedStateV1(state)
-                lastWritten = raw
-            }.onFailure { it.printStackTrace() }
+            portfolioRepo.importStateJson(raw)
+                .onFailure { it.printStackTrace() }
+            lastWritten = raw
         }
 
         hasLoaded = true
@@ -117,20 +103,30 @@ fun AppRoot() {
     LaunchedEffect(Unit) {
         strategiesRepo.upsert(
             StrategyRule.AutoBuyDip(
-                id = 1, ticker = "NBS", dropPercent = 2.0,
-                reference = DipReference.OPEN, budgetEuro = 250.0, cooldownMs = 12_000L
+                id = 1,
+                ticker = "NBS",
+                dropPercent = 2.0,
+                reference = DipReference.OPEN,
+                budgetEuro = 250.0,
+                cooldownMs = 12_000L
             )
         )
         strategiesRepo.upsert(
             StrategyRule.TakeProfit(
-                id = 2, ticker = "NBS", profitPercent = 3.0,
-                sellFraction = 1.0, cooldownMs = 12_000L
+                id = 2,
+                ticker = "NBS",
+                profitPercent = 3.0,
+                sellFraction = 1.0,
+                cooldownMs = 12_000L
             )
         )
         strategiesRepo.upsert(
             StrategyRule.StopLoss(
-                id = 3, ticker = "NBS", lossPercent = 3.0,
-                sellFraction = 1.0, cooldownMs = 12_000L
+                id = 3,
+                ticker = "NBS",
+                lossPercent = 3.0,
+                sellFraction = 1.0,
+                cooldownMs = 12_000L
             )
         )
     }
@@ -180,6 +176,11 @@ fun AppRoot() {
 
     var showExportCsv by rememberSaveable { mutableStateOf(false) }
     var csvText by remember { mutableStateOf("") }
+
+    // ✅ JSON menu dialogs
+    var showExportJson by rememberSaveable { mutableStateOf(false) }
+    var showImportJson by rememberSaveable { mutableStateOf(false) }
+    var jsonText by remember { mutableStateOf("") }
 
     LaunchedEffect(alertsState.triggered.size) {
         banner = alertsState.triggered.lastOrNull()?.message
@@ -262,12 +263,107 @@ fun AppRoot() {
         }
     }
 
+    // ✅ Menu actions (JSON portfolio)
+    val onSavePortfolioNow: () -> Unit = {
+        appScope.launch(Dispatchers.IO) {
+            runCatching { persistNow() }
+                .onSuccess { banner = "✅ Portfolio guardado" }
+                .onFailure { e -> banner = "⚠️ Error al guardar: ${e.message ?: "desconocido"}" }
+        }
+    }
+
+    val onExportPortfolioJson: () -> Unit = {
+        appScope.launch {
+            val text = portfolioRepo.exportStateJson()
+                .getOrElse { e ->
+                    banner = "⚠️ Error exportando JSON: ${e.message ?: "desconocido"}"
+                    return@launch
+                }
+            jsonText = text
+            showExportJson = true
+        }
+    }
+
+    val onImportPortfolioJson: () -> Unit = {
+        jsonText = ""
+        showImportJson = true
+    }
+
+    val onResetPortfolio: () -> Unit = {
+        appScope.launch {
+            portfolioRepo.clearState()
+                .onSuccess {
+                    banner = "✅ Portfolio reseteado"
+                    appScope.launch(Dispatchers.IO) { runCatching { persistNow() } }
+                }
+                .onFailure { e ->
+                    banner = "⚠️ Error al resetear: ${e.message ?: "desconocido"}"
+                }
+        }
+    }
+
+    // ✅ Guardar como archivo (JSON)
+    val onSaveAsJsonFile: () -> Unit = {
+        appScope.launch {
+            val text = portfolioRepo.exportStateJson()
+                .getOrElse { e ->
+                    banner = "⚠️ Error exportando JSON: ${e.message ?: "desconocido"}"
+                    return@launch
+                }
+
+            val rawTs = kotlinx.datetime.Clock.System.now().toString()
+            val safeTs = rawTs.replace(":", "-").replace(".", "-").replace("Z", "")
+            val fileName = "portfolio_$safeTs.json"
+
+            jsonFileIO.saveJson(fileName, text) { ok, msg ->
+                banner = if (ok) "✅ Portfolio guardado en archivo"
+                else msg ?: "⚠️ No se pudo guardar"
+            }
+        }
+    }
+
+    // ✅ Abrir archivo (JSON)
+    val onOpenJsonFile: () -> Unit = {
+        jsonFileIO.openJson { ok, json, msg ->
+            if (!ok || json.isNullOrBlank()) {
+                banner = msg ?: "⚠️ No se pudo abrir"
+                return@openJson
+            }
+
+            appScope.launch {
+                portfolioRepo.importStateJson(json)
+                    .onSuccess {
+                        banner = "✅ Portfolio cargado desde archivo"
+                        appScope.launch(Dispatchers.IO) { runCatching { persistNow() } }
+                    }
+                    .onFailure { e ->
+                        banner = "⚠️ JSON inválido: ${e.message ?: "desconocido"}"
+                    }
+            }
+        }
+    }
+
     AppTheme(p) {
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
             val isWide = maxWidth >= 900.dp
 
             Scaffold(
                 containerColor = Color.Transparent,
+                topBar = {
+                    TopAppBar(
+                        title = { Text("BolsaCotarelo") },
+                        actions = {
+                            PortfolioStateMenuButton(
+                                onSaveNow = onSavePortfolioNow,
+                                onExportJson = onExportPortfolioJson,
+                                onImportJson = onImportPortfolioJson,
+                                onReset = onResetPortfolio,
+                                onSaveAsJsonFile = onSaveAsJsonFile,
+                                onOpenJsonFile = onOpenJsonFile
+                            )
+                        }
+                    )
+                },
                 bottomBar = {
                     if (!isWide) {
                         BottomTabs(
@@ -439,6 +535,76 @@ fun AppRoot() {
                                 ) { Text("Copiar") }
                             },
                             dismissButton = { TextButton(onClick = { showExportCsv = false }) { Text("Cerrar") } }
+                        )
+                    }
+
+                    // ✅ Export JSON dialog (copy)
+                    if (showExportJson) {
+                        AlertDialog(
+                            onDismissRequest = { showExportJson = false },
+                            title = { Text("Exportar portfolio (JSON)") },
+                            text = {
+                                OutlinedTextField(
+                                    value = jsonText,
+                                    onValueChange = { jsonText = it },
+                                    modifier = Modifier.fillMaxWidth().heightIn(min = 220.dp, max = 420.dp),
+                                    label = { Text("JSON") },
+                                    minLines = 10
+                                )
+                            },
+                            confirmButton = {
+                                TextButton(
+                                    onClick = {
+                                        clipboard.setText(AnnotatedString(jsonText))
+                                        banner = "✅ JSON copiado al portapapeles"
+                                        showExportJson = false
+                                    }
+                                ) { Text("Copiar") }
+                            },
+                            dismissButton = { TextButton(onClick = { showExportJson = false }) { Text("Cerrar") } }
+                        )
+                    }
+
+                    // ✅ Import JSON dialog (paste)
+                    if (showImportJson) {
+                        AlertDialog(
+                            onDismissRequest = { showImportJson = false },
+                            title = { Text("Importar portfolio (JSON)") },
+                            text = {
+                                OutlinedTextField(
+                                    value = jsonText,
+                                    onValueChange = { jsonText = it },
+                                    modifier = Modifier.fillMaxWidth().heightIn(min = 220.dp, max = 420.dp),
+                                    label = { Text("Pega aquí el JSON") },
+                                    minLines = 10
+                                )
+                            },
+                            confirmButton = {
+                                TextButton(
+                                    onClick = {
+                                        appScope.launch {
+                                            val raw = jsonText.trim()
+                                            if (raw.isBlank()) {
+                                                banner = "⚠️ El JSON está vacío"
+                                                return@launch
+                                            }
+
+                                            portfolioRepo.importStateJson(raw)
+                                                .onSuccess {
+                                                    banner = "✅ Portfolio cargado"
+                                                    appScope.launch(Dispatchers.IO) { runCatching { persistNow() } }
+                                                    showImportJson = false
+                                                }
+                                                .onFailure { e ->
+                                                    banner = "⚠️ JSON inválido: ${e.message ?: "desconocido"}"
+                                                }
+                                        }
+                                    }
+                                ) { Text("Cargar") }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { showImportJson = false }) { Text("Cancelar") }
+                            }
                         )
                     }
                 }

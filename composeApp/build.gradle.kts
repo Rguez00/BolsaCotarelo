@@ -19,7 +19,7 @@ kotlin {
     sourceSets {
         val commonMain by getting {
             dependencies {
-                // ✅ Multiplataforma
+                // ✅ Compose Multiplatform
                 implementation(compose.runtime)
                 implementation(compose.foundation)
                 implementation(compose.material3)
@@ -27,7 +27,13 @@ kotlin {
                 implementation(compose.components.resources)
                 implementation(compose.components.uiToolingPreview)
 
+                // ✅ ICONOS (necesario para Icons.Filled.*)
+                implementation(compose.materialIconsExtended)
+
+                // ✅ Multiplataforma
                 implementation(libs.kotlinx.datetime)
+
+                // ✅ Serialization JSON (desde TOML)
                 implementation(libs.kotlinx.serialization.json)
             }
         }
@@ -48,7 +54,6 @@ kotlin {
                 implementation(libs.androidx.lifecycle.runtimeKtx)
                 implementation(libs.androidx.lifecycle.runtimeCompose)
                 implementation(libs.androidx.lifecycle.viewmodelCompose)
-
             }
         }
 
