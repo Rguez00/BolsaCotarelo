@@ -9,32 +9,42 @@ plugins {
     alias(libs.plugins.composeHotReload)
     alias(libs.plugins.kotlinSerialization)
 }
+configurations.all {
+    resolutionStrategy {
+        force(
+            "org.jetbrains.kotlinx:kotlinx-datetime:0.6.1",
+            "org.jetbrains.kotlinx:kotlinx-datetime-jvm:0.6.1"
+        )
+    }
+}
 
 kotlin {
     androidTarget {
         compilerOptions { jvmTarget.set(JvmTarget.JVM_11) }
     }
-    jvm()
+
+    // ✅ Target Desktop explícito (Gradle creará desktopMain/desktopTest)
+    jvm("desktop") {
+        compilations.all {
+            compilerOptions.configure {
+                jvmTarget.set(JvmTarget.JVM_11)
+            }
+        }
+    }
 
     sourceSets {
         val commonMain by getting {
             dependencies {
-                // ✅ Compose Multiplatform
                 implementation(compose.runtime)
                 implementation(compose.foundation)
                 implementation(compose.material3)
                 implementation(compose.ui)
                 implementation(compose.components.resources)
                 implementation(compose.components.uiToolingPreview)
-
-                // ✅ ICONOS (necesario para Icons.Filled.*)
                 implementation(compose.materialIconsExtended)
 
-                // ✅ Multiplataforma
-                implementation(libs.kotlinx.datetime)
-
-                // ✅ Serialization JSON (desde TOML)
                 implementation(libs.kotlinx.serialization.json)
+                implementation(libs.kotlinx.datetime) // ok en common
             }
         }
 
@@ -45,24 +55,48 @@ kotlin {
         val androidMain by getting {
             dependencies {
                 implementation(compose.preview)
-
-                // Activity / Compose
                 implementation(libs.androidx.activity.compose)
                 implementation(libs.androidx.activity.ktx)
 
-                // ✅ Lifecycle SOLO Android
                 implementation(libs.androidx.lifecycle.runtimeKtx)
                 implementation(libs.androidx.lifecycle.runtimeCompose)
                 implementation(libs.androidx.lifecycle.viewmodelCompose)
             }
         }
 
-        val jvmMain by getting {
+        /**
+         * ✅ Mantengo tu código en src/jvmMain SIN mover nada.
+         * Creamos un sourceSet intermedio "jvmMain" que apunta a src/jvmMain.
+         */
+        val jvmMain by creating {
+            dependsOn(commonMain)
+            kotlin.srcDir("src/jvmMain/kotlin")
+            resources.srcDir("src/jvmMain/resources")
+
             dependencies {
-                implementation(compose.desktop.currentOs)
+                // Si tenías cosas comunes a JVM, ponlas aquí (opcional)
                 implementation(libs.kotlinx.coroutinesSwing)
                 implementation(libs.kotlinx.datetime)
             }
+        }
+
+        /**
+         * ✅ El Desktop real compila desde desktopMain.
+         * Hacemos que desktopMain dependa de jvmMain (tu código),
+         * y aquí forzamos el artefacto JVM de datetime.
+         */
+        val desktopMain by getting {
+            dependsOn(jvmMain)
+            dependencies {
+                implementation(compose.desktop.currentOs)
+
+                // ✅ FORZAR JAR JVM (esto elimina el NoClassDefFoundError de Clock$System)
+                implementation("org.jetbrains.kotlinx:kotlinx-datetime-jvm:0.6.1")
+            }
+        }
+
+        val desktopTest by getting {
+            dependsOn(commonTest)
         }
     }
 }
@@ -101,8 +135,8 @@ compose.desktop {
     application {
         mainClass = "org.example.project.MainKt"
         nativeDistributions {
-            targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
-            packageName = "org.example.project"
+            targetFormats(TargetFormat.Msi)
+            packageName = "BolsaCotarelo"
             packageVersion = "1.0.0"
         }
     }
