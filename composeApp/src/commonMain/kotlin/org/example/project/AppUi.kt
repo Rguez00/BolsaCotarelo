@@ -5,6 +5,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import org.example.project.domain.model.MarketTrend
+import org.example.project.presentation.mode.ThemeMode
 
 internal enum class AppTab(val label: String, val glyph: String) {
     MARKET("Mercado", "📈"),
@@ -30,6 +31,7 @@ internal data class AppPalette(
     val textMuted: Color
 ) {
     companion object {
+
         fun darkFintechWhiteBackdrop(): AppPalette = AppPalette(
             surface0 = Color(0xFF0B1428),
             surface1 = Color(0xFF0F1D38),
@@ -45,22 +47,52 @@ internal data class AppPalette(
             textSoft = Color(0xFFB7C6DE),
             textMuted = Color(0xFF8EA5C6)
         )
+
+        fun lightFintechWhiteBackdrop(): AppPalette = AppPalette(
+            surface0 = Color(0xFFF8FAFC),
+            surface1 = Color(0xFFFFFFFF),
+            surface2 = Color(0xFFEFF6FF),
+            stroke = Color(0x1F000000),
+            strokeSoft = Color(0x14000000),
+            brand = Color(0xFF0284C7),
+            brand2 = Color(0xFF7C3AED),
+            success = Color(0xFF059669),
+            danger = Color(0xFFDC2626),
+            neutral = Color(0xFF64748B),
+            textStrong = Color(0xFF0F172A),
+            textSoft = Color(0xFF334155),
+            textMuted = Color(0xFF64748B)
+        )
     }
 }
 
 @Composable
-internal fun AppTheme(p: AppPalette, content: @Composable () -> Unit) {
+internal fun AppTheme(
+    themeMode: ThemeMode,
+    content: @Composable () -> Unit
+) {
+    val palette = when (themeMode) {
+        ThemeMode.DARK -> AppPalette.darkFintechWhiteBackdrop()
+        ThemeMode.LIGHT -> AppPalette.lightFintechWhiteBackdrop()
+        ThemeMode.SYSTEM -> AppPalette.darkFintechWhiteBackdrop()
+    }
+
+
     val scheme = darkColorScheme(
-        primary = p.brand,
-        secondary = p.brand2,
-        surface = p.surface0,
-        error = p.danger,
-        onSurface = p.textStrong,
+        primary = palette.brand,
+        secondary = palette.brand2,
+        surface = palette.surface0,
+        error = palette.danger,
+        onSurface = palette.textStrong,
         onPrimary = Color(0xFF001018),
         onSecondary = Color.White,
         onError = Color.White
     )
-    MaterialTheme(colorScheme = scheme, content = content)
+
+    MaterialTheme(
+        colorScheme = scheme,
+        content = content
+    )
 }
 
 internal fun trendLabel(t: MarketTrend): String = when (t) {

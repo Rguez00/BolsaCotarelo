@@ -20,30 +20,36 @@ private const val CHANNEL_NAME = "Alertas de precio"
 actual fun rememberAlertNotifier(): AlertNotifier {
     val context = LocalContext.current
 
-    // Crea canal al instanciar
-    remember(context) { ensureChannel(context) }
-
+    // ✅ FIX 1: remember debe devolver algo, no Unit
     return remember(context) {
+        // Crear canal aquí dentro
+        ensureChannel(context)
+
+        // Devolver el objeto AlertNotifier
         object : AlertNotifier {
             override fun notifyPriceAlert(title: String, message: String) {
-                // Android 13+ requiere permiso runtime; si no está concedido, no rompe: simplemente no notifica
+                // ✅ FIX 2: Verificar permiso explícitamente
                 if (!hasPostNotificationsPermission(context)) return
 
-                val notif = NotificationCompat.Builder(context, CHANNEL_ID)
-                    .setSmallIcon(android.R.drawable.stat_notify_more) // simple, luego lo cambiamos por tu icono
-                    .setContentTitle(title)
-                    .setContentText(message)
-                    .setStyle(NotificationCompat.BigTextStyle().bigText(message))
-                    .setPriority(NotificationCompat.PRIORITY_HIGH)
-                    .setAutoCancel(true)
-                    .build()
+                try {
+                    val notif = NotificationCompat.Builder(context, CHANNEL_ID)
+                        .setSmallIcon(android.R.drawable.stat_notify_more)
+                        .setContentTitle(title)
+                        .setContentText(message)
+                        .setStyle(NotificationCompat.BigTextStyle().bigText(message))
+                        .setPriority(NotificationCompat.PRIORITY_HIGH)
+                        .setAutoCancel(true)
+                        .build()
 
-                NotificationManagerCompat.from(context).notify(nextId(), notif)
+                    NotificationManagerCompat.from(context).notify(nextId(), notif)
+                } catch (e: SecurityException) {
+                    // Manejar el caso donde el permiso fue revocado
+                    e.printStackTrace()
+                }
             }
 
             override fun beep() {
-                // En Android, la notificación ya puede sonar por defecto.
-                // Si quieres beep extra, lo añadimos con ToneGenerator.
+                // La notificación ya suena por defecto en Android
             }
         }
     }
@@ -70,7 +76,10 @@ private fun hasPostNotificationsPermission(context: Context): Boolean {
     return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
                 PackageManager.PERMISSION_GRANTED
-    } else true
+    } else {
+        // En versiones anteriores a Android 13, no se necesita permiso runtime
+        true
+    }
 }
 
 @Volatile private var _id = 1000

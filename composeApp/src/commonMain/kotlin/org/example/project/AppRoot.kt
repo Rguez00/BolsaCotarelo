@@ -4,6 +4,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -31,6 +33,7 @@ import org.example.project.domain.strategy.StrategyRule
 import org.example.project.engine.MarketEngine
 import org.example.project.platform.rememberAlertNotifier
 import org.example.project.platform.rememberPortfolioJsonFileIO
+import org.example.project.presentation.mode.ThemeMode
 import org.example.project.presentation.strategies.StrategiesConfigDialog
 import org.example.project.presentation.ui.PortfolioStateMenuButton
 import org.example.project.presentation.ui.TradeDialog
@@ -41,6 +44,7 @@ import kotlin.math.abs
 @Composable
 fun AppRoot() {
     val appScope = rememberCoroutineScope()
+    var themeMode by rememberSaveable { mutableStateOf(ThemeMode.DARK) }
 
     val jsonStore = rememberJsonStore("portfolio.json")
     val jsonFileIO = rememberPortfolioJsonFileIO()
@@ -203,19 +207,7 @@ fun AppRoot() {
     }
 
     val featured: StockSnapshot? = marketState.stocks.maxByOrNull { it.changePercent }
-    val p = remember { AppPalette.darkFintechWhiteBackdrop() }
 
-    fun pctColor(pct: Double) = when {
-        pct > 0.0001 -> p.success
-        pct < -0.0001 -> p.danger
-        else -> p.neutral
-    }
-
-    fun arrow(pct: Double) = when {
-        pct > 0.0001 -> "▲"
-        pct < -0.0001 -> "▼"
-        else -> "•"
-    }
 
     val safeToggleOpen: () -> Unit = {
         runCatching {
@@ -366,7 +358,24 @@ fun AppRoot() {
         }
     }
 
-    AppTheme(p) {
+    AppTheme(themeMode) {
+        val p = when (themeMode) {
+            ThemeMode.DARK -> AppPalette.darkFintechWhiteBackdrop()
+            ThemeMode.LIGHT -> AppPalette.lightFintechWhiteBackdrop()
+            ThemeMode.SYSTEM -> AppPalette.darkFintechWhiteBackdrop()
+        }
+        fun pctColor(pct: Double) = when {
+            pct > 0.0001 -> p.success
+            pct < -0.0001 -> p.danger
+            else -> p.neutral
+        }
+
+        fun arrow(pct: Double) = when {
+            pct > 0.0001 -> "▲"
+            pct < -0.0001 -> "▼"
+            else -> "•"
+        }
+
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
             val isWide = maxWidth >= 900.dp
 
@@ -374,15 +383,43 @@ fun AppRoot() {
                 containerColor = Color.Transparent,
                 topBar = {
                     TopAppBar(
-                        title = { Text("BolsaCotarelo") },
+                        title = { Text("BolsaCotarelo", color = p.textStrong) },
+                        colors = TopAppBarDefaults.topAppBarColors(
+                            containerColor = p.surface0,
+                            titleContentColor = p.textStrong,
+                            actionIconContentColor = p.textStrong
+                        ),
                         actions = {
+                            IconButton(
+                                onClick = {
+                                    themeMode = if (themeMode == ThemeMode.DARK) {
+                                        ThemeMode.LIGHT
+                                    } else {
+                                        ThemeMode.DARK
+                                    }
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = if (themeMode == ThemeMode.DARK) {
+                                        androidx.compose.material.icons.Icons.Default.LightMode
+                                    } else {
+                                        androidx.compose.material.icons.Icons.Default.DarkMode
+                                    },
+                                    contentDescription = "Cambiar tema",
+                                    tint = p.textStrong
+                                )
+                            }
+
                             PortfolioStateMenuButton(
                                 onSaveNow = onSavePortfolioNow,
                                 onExportJson = onExportPortfolioJson,
                                 onImportJson = onImportPortfolioJson,
                                 onReset = onResetPortfolio,
                                 onSaveAsJsonFile = onSaveAsJsonFile,
-                                onOpenJsonFile = onOpenJsonFile
+                                onOpenJsonFile = onOpenJsonFile,
+                                containerColor = p.surface1,
+                                textColor = p.textStrong,
+                                dividerColor = p.strokeSoft
                             )
                         }
                     )
@@ -650,6 +687,16 @@ private fun MarketScheduleDialog(
         unfocusedTextColor = p.textStrong
     )
 
+    // ✅ AÑADE ESTO: Colores personalizados para el Switch
+    val switchColors = SwitchDefaults.colors(
+        checkedThumbColor = p.brand,
+        checkedTrackColor = p.brand.copy(alpha = 0.5f),
+        uncheckedThumbColor = p.textMuted,
+        uncheckedTrackColor = p.strokeSoft,
+        checkedBorderColor = Color.Transparent,
+        uncheckedBorderColor = Color.Transparent
+    )
+
     Dialog(onDismissRequest = onDismiss) {
         Card(
             shape = shape,
@@ -670,7 +717,7 @@ private fun MarketScheduleDialog(
                     fontWeight = FontWeight.SemiBold
                 )
 
-                Divider(color = p.strokeSoft)
+                HorizontalDivider(color = p.strokeSoft) // ✅ Cambiado de Divider a HorizontalDivider
 
                 Row(
                     modifier = Modifier
@@ -683,7 +730,8 @@ private fun MarketScheduleDialog(
                 ) {
                     Switch(
                         checked = enabled,
-                        onCheckedChange = { enabled = it; error = null }
+                        onCheckedChange = { enabled = it; error = null },
+                        colors = switchColors // ✅ APLICA LOS COLORES AQUÍ
                     )
                     Spacer(Modifier.width(10.dp))
                     Column(Modifier.weight(1f)) {

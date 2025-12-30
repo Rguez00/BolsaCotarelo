@@ -3,13 +3,9 @@ package org.example.project.presentation.ui
 import androidx.compose.foundation.layout.Box
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material3.Divider
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.Text
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.graphics.Color
 
 @Composable
 fun PortfolioStateMenuButton(
@@ -18,7 +14,10 @@ fun PortfolioStateMenuButton(
     onImportJson: () -> Unit,
     onReset: () -> Unit,
     onSaveAsJsonFile: () -> Unit,
-    onOpenJsonFile: () -> Unit
+    onOpenJsonFile: () -> Unit,
+    containerColor: Color,
+    textColor: Color,
+    dividerColor: Color
 ) {
     var expanded by remember { mutableStateOf(false) }
 
@@ -29,12 +28,12 @@ fun PortfolioStateMenuButton(
 
         DropdownMenu(
             expanded = expanded,
-            onDismissRequest = { expanded = false }
+            onDismissRequest = { expanded = false },
+            containerColor = containerColor
         ) {
 
-            // ===== Guardado =====
             DropdownMenuItem(
-                text = { Text("Guardar portfolio") },
+                text = { Text("Guardar portfolio", color = textColor) },
                 onClick = {
                     expanded = false
                     onSaveNow()
@@ -42,18 +41,17 @@ fun PortfolioStateMenuButton(
             )
 
             DropdownMenuItem(
-                text = { Text("Guardar como… (JSON)") },
+                text = { Text("Guardar como… (JSON)", color = textColor) },
                 onClick = {
                     expanded = false
                     onSaveAsJsonFile()
                 }
             )
 
-            Divider()
+            HorizontalDivider(color = dividerColor)
 
-            // ===== Import / Export =====
             DropdownMenuItem(
-                text = { Text("Exportar JSON") },
+                text = { Text("Exportar JSON", color = textColor) },
                 onClick = {
                     expanded = false
                     onExportJson()
@@ -61,7 +59,7 @@ fun PortfolioStateMenuButton(
             )
 
             DropdownMenuItem(
-                text = { Text("Importar JSON") },
+                text = { Text("Importar JSON", color = textColor) },
                 onClick = {
                     expanded = false
                     onImportJson()
@@ -69,18 +67,17 @@ fun PortfolioStateMenuButton(
             )
 
             DropdownMenuItem(
-                text = { Text("Abrir archivo… (JSON)") },
+                text = { Text("Abrir archivo… (JSON)", color = textColor) },
                 onClick = {
                     expanded = false
                     onOpenJsonFile()
                 }
             )
 
-            Divider()
+            HorizontalDivider(color = dividerColor)
 
-            // ===== Reset =====
             DropdownMenuItem(
-                text = { Text("Reset portfolio") },
+                text = { Text("Reset portfolio", color = textColor) },
                 onClick = {
                     expanded = false
                     onReset()
