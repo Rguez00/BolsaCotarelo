@@ -41,7 +41,6 @@ import org.example.project.presentation.charts.BarItem
 import org.example.project.presentation.charts.PieChart
 import org.example.project.presentation.charts.PieSlice
 
-
 @Composable
 internal fun MainCard(
     modifier: Modifier,
@@ -66,6 +65,7 @@ internal fun MainCard(
     onToggleOpen: () -> Unit,
     onTogglePause: () -> Unit,
     onSetSpeed: (Double) -> Unit,
+    onOpenSchedule: () -> Unit, // ✅ NUEVO
     canTrade: Boolean,
     onBuy: (String) -> Unit,
     onSell: (String) -> Unit,
@@ -123,6 +123,7 @@ internal fun MainCard(
                 isOpen = marketState.isOpen,
                 isPaused = marketState.isPaused,
                 simSpeed = marketState.simSpeed,
+                autoScheduleEnabled = marketState.autoScheduleEnabled, // ✅ NUEVO
                 surface = p.surface1,
                 inner = p.surface2,
                 stroke = p.strokeSoft,
@@ -134,7 +135,8 @@ internal fun MainCard(
                 neutral = p.neutral,
                 onToggleOpen = onToggleOpen,
                 onTogglePause = onTogglePause,
-                onSetSpeed = onSetSpeed
+                onSetSpeed = onSetSpeed,
+                onOpenSchedule = onOpenSchedule // ✅ NUEVO
             )
 
             Spacer(Modifier.height(sectionGap))
@@ -546,8 +548,8 @@ internal fun MainCard(
                 }
 
                 // =========================================================
-// CHARTS (✅ IMPLEMENTADO + BARRAS)
-// =========================================================
+                // CHARTS (✅ IMPLEMENTADO + BARRAS)
+                // =========================================================
                 AppTab.CHARTS -> {
                     val tickers = marketState.stocks.map { it.ticker }
                     val pointsPrice = priceHistory[selectedTicker].orEmpty()
@@ -713,8 +715,6 @@ internal fun MainCard(
                     }
                 }
 
-
-
                 // =========================================================
                 // ALERTS
                 // =========================================================
@@ -879,7 +879,6 @@ internal fun MainCard(
                         }
                     }
                 }
-
             }
         }
     }
@@ -901,7 +900,6 @@ private fun fmtDateTime(tsMillis: Long): String {
         tsMillis.toString()
     }
 }
-
 
 @Composable
 private fun ChartCard(
@@ -1202,7 +1200,6 @@ private fun HeaderCompact(
     }
 }
 
-
 @Composable
 private fun CompactTopBarUltra(
     cash: Double,
@@ -1212,6 +1209,7 @@ private fun CompactTopBarUltra(
     isOpen: Boolean,
     isPaused: Boolean,
     simSpeed: Double,
+    autoScheduleEnabled: Boolean, // ✅ NUEVO
     surface: Color,
     inner: Color,
     stroke: Color,
@@ -1223,7 +1221,8 @@ private fun CompactTopBarUltra(
     neutral: Color,
     onToggleOpen: () -> Unit,
     onTogglePause: () -> Unit,
-    onSetSpeed: (Double) -> Unit
+    onSetSpeed: (Double) -> Unit,
+    onOpenSchedule: () -> Unit // ✅ NUEVO
 ) {
     val shape = RoundedCornerShape(16.dp)
 
@@ -1266,37 +1265,60 @@ private fun CompactTopBarUltra(
                 )
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                ControlChip(
-                    text = if (isOpen) "CERRAR" else "ABRIR",
-                    bg = (if (isOpen) danger else success).copy(alpha = 0.16f),
-                    stroke = (if (isOpen) danger else success).copy(alpha = 0.38f),
-                    fg = if (isOpen) danger else success,
-                    modifier = Modifier.weight(1f),
-                    onClick = onToggleOpen
-                )
-                ControlChip(
-                    text = if (isPaused) "REANUDAR" else "PAUSAR",
-                    bg = neutral.copy(alpha = 0.14f),
-                    stroke = neutral.copy(alpha = 0.30f),
-                    fg = Color(0xFFE3ECFF),
-                    modifier = Modifier.weight(1f),
-                    onClick = onTogglePause
-                )
+            // ✅ FIX RESPONSIVE:
+            // - Chips (CERRAR/PAUSAR/HORARIO) en una fila.
+            // - Velocidad (SpeedInline) en una segunda fila, para que no “aplane” los textos.
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
 
-                SpeedInline(
-                    current = simSpeed,
-                    textSoft = textSoft,
-                    strong = textStrong,
-                    muted = textMuted,
-                    stroke = stroke,
-                    inner = inner,
-                    onSetSpeed = onSetSpeed
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    ControlChip(
+                        text = if (isOpen) "CERRAR" else "ABRIR",
+                        bg = (if (isOpen) danger else success).copy(alpha = 0.16f),
+                        stroke = (if (isOpen) danger else success).copy(alpha = 0.38f),
+                        fg = if (isOpen) danger else success,
+                        modifier = Modifier.weight(1f),
+                        enabled = true, // ✅ siempre activo (AUTO usa override temporal)
+                        onClick = onToggleOpen
+                    )
+
+                    ControlChip(
+                        text = if (isPaused) "REANUDAR" else "PAUSAR",
+                        bg = neutral.copy(alpha = 0.14f),
+                        stroke = neutral.copy(alpha = 0.30f),
+                        fg = Color(0xFFE3ECFF),
+                        modifier = Modifier.weight(1f),
+                        onClick = onTogglePause
+                    )
+
+                    ControlChip(
+                        text = if (autoScheduleEnabled) "HORARIO ✓" else "HORARIO",
+                        bg = (if (autoScheduleEnabled) success else neutral).copy(alpha = 0.14f),
+                        stroke = (if (autoScheduleEnabled) success else neutral).copy(alpha = 0.30f),
+                        fg = Color(0xFFE3ECFF),
+                        modifier = Modifier.weight(1f),
+                        onClick = onOpenSchedule
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    SpeedInline(
+                        current = simSpeed,
+                        textSoft = textSoft,
+                        strong = textStrong,
+                        muted = textMuted,
+                        stroke = stroke,
+                        inner = inner,
+                        onSetSpeed = onSetSpeed
+                    )
+                }
             }
         }
     }
@@ -1338,19 +1360,30 @@ private fun ControlChip(
     stroke: Color,
     fg: Color,
     modifier: Modifier,
+    enabled: Boolean = true, // ✅ NUEVO
     onClick: () -> Unit
 ) {
     val shape = RoundedCornerShape(999.dp)
+    val alpha = if (enabled) 1f else 0.45f
+
     Box(
         modifier = modifier
+            .heightIn(min = 36.dp) // ✅ un pelín más de alto para que “respire”
             .clip(shape)
-            .background(bg)
-            .border(1.dp, stroke, shape)
-            .clickable { onClick() }
-            .padding(horizontal = 10.dp, vertical = 8.dp),
+            .background(bg.copy(alpha = bg.alpha * alpha))
+            .border(1.dp, stroke.copy(alpha = stroke.alpha * alpha), shape)
+            .then(if (enabled) Modifier.clickable { onClick() } else Modifier)
+            .padding(horizontal = 12.dp, vertical = 8.dp), // ✅ más padding horizontal = texto cabe mejor
         contentAlignment = Alignment.Center
     ) {
-        Text(text = text, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, color = fg, maxLines = 1)
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = fg.copy(alpha = alpha),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis // ✅ por si en móviles MUY pequeños
+        )
     }
 }
 

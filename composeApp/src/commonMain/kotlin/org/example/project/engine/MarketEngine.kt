@@ -4,9 +4,14 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+import kotlinx.datetime.Clock
 import org.example.project.core.market.MarketClock
+import org.example.project.core.market.MarketSchedule
 import org.example.project.data.repository.MarketRepository
 import org.example.project.data.repository.PortfolioRepository
 import org.example.project.domain.strategy.RepoStrategyMarketBridge
@@ -15,179 +20,157 @@ import org.example.project.domain.strategy.StrategiesRepository
 import org.example.project.domain.strategy.StrategyEngine
 import org.example.project.presentation.state.MarketState
 
-/**
- * Motor de simulación:
- * - 1 coroutine por ticker.
- * - 2 coroutines globales: tendencia + noticias.
- * - + Estrategias automáticas (StrategyEngine) escuchando cambios de precios.
- *
- * Corrección importante:
- * - Acceso thread-safe a updaterJobs y jobs globales (control serializado).
- * - Cuando se PAUSA o se CIERRA el mercado: se paran tickers + news/trend + strategies.
- */
 class MarketEngine(
     private val marketRepo: MarketRepository,
     private val portfolioRepo: PortfolioRepository,
     private val strategiesRepo: StrategiesRepository,
     externalScope: CoroutineScope? = null
 ) {
-    // Job del engine:
+    companion object {
+        // Tiempo de “override manual” cuando autoSchedule está activo
+        private const val DEFAULT_MANUAL_OVERRIDE_MS: Long = 5 * 60 * 1000L // 5 min
+    }
+
     private val engineJob: Job = SupervisorJob(externalScope?.coroutineContext?.get(Job))
-
-    // Scope de trabajo pesado (tickers / generators)
     private val workerScope: CoroutineScope = CoroutineScope(Dispatchers.Default + engineJob)
-
-    // Scope de control SERIAL (start/stop jobs, tocar maps) => evita carreras
     private val controlScope: CoroutineScope =
         CoroutineScope(Dispatchers.Default.limitedParallelism(1) + engineJob)
 
     val marketState: StateFlow<MarketState> = marketRepo.marketState
 
-    // 1 job por ticker (clave: ticker normalizado)
     private val updaterJobs: MutableMap<String, Job> = mutableMapOf()
-
-    // Reloj del mercado
     private val marketClock = MarketClock(marketRepo, workerScope)
 
-    // Jobs globales
     private var trendJob: Job? = null
     private var newsJob: Job? = null
-
-    // Estrategias automáticas
     private var strategyEngine: StrategyEngine? = null
 
-    // Reutilizamos updater (no crear objetos en bucle)
     private val updater = SingleStockPriceUpdater(marketRepo)
 
-    // ÚNICO generador global (no recrearlo)
     private val generator: NewsAndTrendGenerator by lazy {
         NewsAndTrendGenerator(marketRepo, workerScope)
     }
 
-    // ============================================================
-    // START / STOP
-    // ============================================================
-
+    private var stateSyncJob: Job? = null
 
     fun start() {
-        marketClock.start()
-        startAllTickers()
-    }
-    fun startAllTickers() {
         if (!engineJob.isActive) return
+
+        marketClock.start()
+
+        if (stateSyncJob?.isActive != true) {
+            stateSyncJob = controlScope.launch {
+                marketState
+                    .map { it.isOpen to it.isPaused }
+                    .distinctUntilChanged()
+                    .collect { (open, paused) ->
+                        syncEngineTo(open = open, paused = paused)
+                    }
+            }
+        }
+
         controlScope.launch {
             val st = marketState.value
             syncEngineTo(open = st.isOpen, paused = st.isPaused)
         }
     }
 
-    fun startTicker(ticker: String) {
-        if (!engineJob.isActive) return
-        val t = normalizeTicker(ticker)
-
-        controlScope.launch {
-            val st = marketState.value
-            if (!st.isOpen || st.isPaused) return@launch
-
-            startGlobalGeneratorsIfNeededLocked()
-            startStrategiesIfNeededLocked()
-            startTickerLocked(t)
-        }
-    }
-
-    fun stopTicker(ticker: String) {
-        val t = normalizeTicker(ticker)
-        if (!engineJob.isActive) return
-
-        controlScope.launch {
-            updaterJobs.remove(t)?.cancel()
-        }
-    }
-
-    fun stopAllTickers() {
-        if (!engineJob.isActive) return
-        controlScope.launch {
-            stopAllTickersLocked()
-        }
-    }
-    /**
-     * Para TODO (tickers + generators + strategies) sin cerrar el engine.
-     * Útil si quisieras “resetear” en runtime.
-     */
-    fun stopAll() {
-        if (!engineJob.isActive) return
-        controlScope.launch {
-            stopAllTickersLocked()
-            stopGlobalGeneratorsLocked()
-            stopStrategiesLocked()
-        }
-    }
-
-    /**
-     * Cierre final del engine (Desktop onClose / Android onDestroy).
-     * Cancela TODO lo del motor, sin tocar scopes externos.
-     */
     fun close() {
         if (!engineJob.isActive) return
 
         controlScope.launch {
-            marketClock.stop()  // ← AÑADE ESTO
+            marketClock.stop()
+
+            stateSyncJob?.cancel()
+            stateSyncJob = null
+
             stopAllTickersLocked()
             stopGlobalGeneratorsLocked()
             stopStrategiesLocked()
         }.invokeOnCompletion {
-            // cancela todo el árbol de jobs (worker + control)
             engineJob.cancel()
         }
     }
 
     // ============================================================
-    // CONTROLES (enunciado)
+    // CONTROLES
     // ============================================================
 
     fun setPaused(paused: Boolean) {
         marketRepo.setPaused(paused)
-        if (!engineJob.isActive) return
-
-        // NO dependemos del marketState “recién emitido”; usamos el parámetro
-        controlScope.launch {
-            val open = marketState.value.isOpen
-            syncEngineTo(open = open, paused = paused)
-        }
+        // listener sincroniza
     }
 
+    /**
+     * ✅ ABRIR/CERRAR:
+     * - AUTO OFF -> manual normal.
+     * - AUTO ON  -> override temporal (sin desactivar auto).
+     *
+     * Importante:
+     * - setManualOverride() YA aplica isOpen=open en el repo (efecto inmediato).
+     * - MarketClock respeta el override hasta que expire.
+     */
     fun setMarketOpen(open: Boolean) {
-        marketRepo.setMarketOpen(open)
-        if (!engineJob.isActive) return
+        val st = marketState.value
 
-        // Igual: usamos el parámetro 'open' para evitar estado desfasado
-        controlScope.launch {
-            val paused = marketState.value.isPaused
-            syncEngineTo(open = open, paused = paused)
+        if (!st.autoScheduleEnabled) {
+            // Manual puro
+            runCatching { marketRepo.clearManualOverride() } // por si venías de override
+            marketRepo.setMarketOpen(open)
+
+            if (open && st.isPaused) marketRepo.setPaused(false)
+            return
         }
+
+        // AUTO ON: override temporal
+        val nowMs = Clock.System.now().toEpochMilliseconds()
+        val untilMs = nowMs + DEFAULT_MANUAL_OVERRIDE_MS
+
+        marketRepo.setManualOverride(forcedOpen = open, untilEpochMs = untilMs)
+
+        // Si abres manualmente, reanuda
+        if (open && st.isPaused) {
+            marketRepo.setPaused(false)
+        }
+        // ❌ No llamamos checkNow aquí: el clock ya respetará el override.
     }
 
     fun setSimSpeed(speed: Double) {
         marketRepo.setSimSpeed(speed)
-        // No reiniciamos jobs:
-        // - SingleStockPriceUpdater consulta state.simSpeed.
-        // - NewsAndTrendGenerator consulta simSpeed en delays.
     }
 
     // ============================================================
-    // LÓGICA INTERNA (SIEMPRE en controlScope)
+    // Horario automático
+    // ============================================================
+
+    fun setAutoScheduleEnabled(enabled: Boolean) {
+        marketRepo.setAutoScheduleEnabled(enabled)
+
+        // Si desactivas auto, ya no tiene sentido un override
+        if (!enabled) {
+            runCatching { marketRepo.clearManualOverride() }
+        }
+
+        marketClock.checkNow()
+    }
+
+    fun setMarketSchedule(schedule: MarketSchedule) {
+        marketRepo.setMarketSchedule(schedule)
+        marketClock.checkNow()
+    }
+
+    // ============================================================
+    // LÓGICA INTERNA
     // ============================================================
 
     private fun syncEngineTo(open: Boolean, paused: Boolean) {
         if (!open || paused) {
-            // congelar TODO
             stopAllTickersLocked()
             stopGlobalGeneratorsLocked()
             stopStrategiesLocked()
             return
         }
 
-        // mercado abierto y no pausado => arrancar TODO
         startGlobalGeneratorsIfNeededLocked()
         startStrategiesIfNeededLocked()
 
@@ -200,22 +183,16 @@ class MarketEngine(
     private fun startTickerLocked(tickerNorm: String) {
         if (updaterJobs[tickerNorm]?.isActive == true) return
 
-        val job = workerScope.launch {
-            updater.run(tickerNorm)
-        }
+        val job = workerScope.launch { updater.run(tickerNorm) }
 
-        // Limpieza automática (pero la mutación del map la hacemos serializada)
         job.invokeOnCompletion {
-            controlScope.launch {
-                updaterJobs.remove(tickerNorm)
-            }
+            controlScope.launch { updaterJobs.remove(tickerNorm) }
         }
 
         updaterJobs[tickerNorm] = job
     }
 
     private fun stopAllTickersLocked() {
-        // snapshot para cancelar fuera de iteraciones raras
         val jobs = updaterJobs.values.toList()
         updaterJobs.clear()
         jobs.forEach { it.cancel() }
@@ -237,10 +214,6 @@ class MarketEngine(
         newsJob = null
     }
 
-    // ============================================================
-    // Estrategias (SIEMPRE en controlScope)
-    // ============================================================
-
     private fun startStrategiesIfNeededLocked() {
         if (strategyEngine != null) return
         strategyEngine = StrategyEngine(
@@ -254,10 +227,6 @@ class MarketEngine(
         strategyEngine?.close()
         strategyEngine = null
     }
-
-    // ============================================================
-    // Helpers
-    // ============================================================
 
     private fun normalizeTicker(raw: String): String =
         raw.trim().uppercase()

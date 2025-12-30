@@ -1,17 +1,11 @@
 package org.example.project.data.repository
 
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.*
+import kotlinx.datetime.Clock
+import org.example.project.core.market.MarketSchedule
 import org.example.project.core.util.ThreadSafeMap
-import org.example.project.domain.model.MarketTrend
-import org.example.project.domain.model.NewsEvent
-import org.example.project.domain.model.Sector
-import org.example.project.domain.model.Stock
-import org.example.project.domain.model.StockSnapshot
+import org.example.project.domain.model.*
 import org.example.project.presentation.state.MarketState
 
 class InMemoryMarketRepository(
@@ -24,22 +18,19 @@ class InMemoryMarketRepository(
     private val snapshots = ThreadSafeMap<String, StockSnapshot>()
     private val sectorBiasPercent = ThreadSafeMap<String, Double>() // key = Sector.name
 
-    // Orden estable para UI (evita sort en cada publish)
     private val orderedTickers: List<String> =
-        initialStocks
-            .map { normalizeTicker(it.ticker) }
-            .distinct()
-            .sorted()
+        initialStocks.map { normalizeTicker(it.ticker) }.distinct().sorted()
 
-    // Bias global por tick (% aprox). Ej: +0.10 => +0.10% por tick
     @Volatile
     private var trendBiasPercent: Double = 0.0
 
-    // Evita que múltiples tickers reconstruyan/publquen la lista a la vez
     private val publishLock = Any()
 
+    @Volatile
+    private var lastPublishedStocks: List<StockSnapshot> = emptyList()
+
     // =========================
-    // Flow + StateFlow (requisitos)
+    // Flow + StateFlow
     // =========================
     private val _marketState = MutableStateFlow(
         MarketState(
@@ -47,17 +38,22 @@ class InMemoryMarketRepository(
             isPaused = false,
             simSpeed = 1.0,
             trend = MarketTrend.NEUTRAL,
+            marketTimeMillis = 0L,
+            autoScheduleEnabled = false,
+            // ✅ override fields ya existen en tu MarketState actual
+            manualOverrideActive = false,
+            manualOverrideUntilEpochMs = 0L,
             stocks = emptyList(),
             news = emptyList()
         )
     )
-    override val marketState: StateFlow<MarketState> = _marketState
+    override val marketState: StateFlow<MarketState> = _marketState.asStateFlow()
 
     private val _priceUpdates = MutableSharedFlow<StockSnapshot>(
         replay = 0,
         extraBufferCapacity = 128
     )
-    override val priceUpdates: Flow<StockSnapshot> = _priceUpdates
+    override val priceUpdates: Flow<StockSnapshot> = _priceUpdates.asSharedFlow()
 
     // =========================
     // Init
@@ -67,28 +63,25 @@ class InMemoryMarketRepository(
             val t = normalizeTicker(stock.ticker)
             val price = stock.initialPrice
 
-            val snap = StockSnapshot(
-                name = stock.name,
-                ticker = t,
-                sector = stock.sector,
-                volatility = stock.volatility,
-
-                currentPrice = price,
-                openPrice = price,
-                highPrice = price,
-                lowPrice = price,
-
-                changeEuro = 0.0,
-                changePercent = 0.0,
-
-                volume = 0L,
-                priceHistory = listOf(price)
+            snapshots.put(
+                t,
+                StockSnapshot(
+                    name = stock.name,
+                    ticker = t,
+                    sector = stock.sector,
+                    volatility = stock.volatility,
+                    currentPrice = price,
+                    openPrice = price,
+                    highPrice = price,
+                    lowPrice = price,
+                    changeEuro = 0.0,
+                    changePercent = 0.0,
+                    volume = 0L,
+                    priceHistory = listOf(price)
+                )
             )
-
-            snapshots.put(t, snap)
         }
 
-        // Inicializamos bias de sectores a 0
         Sector.values().forEach { sector ->
             sectorBiasPercent.put(sector.name, 0.0)
         }
@@ -97,26 +90,23 @@ class InMemoryMarketRepository(
     }
 
     // =========================
-    // MarketRepository implementation
+    // MarketRepository
     // =========================
     override fun getSnapshot(ticker: String): StockSnapshot? =
         snapshots.get(normalizeTicker(ticker))
 
     override fun updateSnapshot(ticker: String, newSnapshot: StockSnapshot) {
         val t = normalizeTicker(ticker)
-
-        // Guardamos snapshot (forzamos ticker normalizado por seguridad)
         val safeSnapshot = if (newSnapshot.ticker == t) newSnapshot else newSnapshot.copy(ticker = t)
-        snapshots.put(t, safeSnapshot)
 
-        // Flow de cambios de precios (requisito)
+        snapshots.put(t, safeSnapshot)
         _priceUpdates.tryEmit(safeSnapshot)
 
-        // Publicación consolidada para UI (lista estable)
         publish()
     }
 
     override fun setMarketOpen(isOpen: Boolean) {
+        println("MarketRepo(${this.hashCode()}).setMarketOpen($isOpen)")
         _marketState.update { it.copy(isOpen = isOpen) }
     }
 
@@ -127,6 +117,61 @@ class InMemoryMarketRepository(
     override fun setSimSpeed(speed: Double) {
         val safe = speed.coerceIn(0.25, 10.0)
         _marketState.update { it.copy(simSpeed = safe) }
+    }
+
+    // =========================
+    // Horario automático
+    // =========================
+    override fun setAutoScheduleEnabled(enabled: Boolean) {
+        println("MarketRepo.setAutoScheduleEnabled($enabled)")
+
+        _marketState.update { st ->
+            if (enabled) {
+                // ✅ Si activas AUTO, cancelamos cualquier override manual
+                st.copy(
+                    autoScheduleEnabled = true,
+                    manualOverrideActive = false,
+                    manualOverrideUntilEpochMs = 0L
+                )
+            } else {
+                st.copy(autoScheduleEnabled = false)
+            }
+        }
+    }
+
+    override fun setMarketSchedule(schedule: MarketSchedule) {
+        println("MarketRepo.setMarketSchedule(open=${schedule.openTime} close=${schedule.closeTime})")
+        _marketState.update { it.copy(schedule = schedule) }
+    }
+
+    // =========================
+    // Override manual (NUEVO)
+    // =========================
+    override fun setManualOverride(forcedOpen: Boolean, untilEpochMs: Long) {
+        println("MarketRepo.setManualOverride(forcedOpen=$forcedOpen until=$untilEpochMs)")
+
+        _marketState.update { st ->
+            st.copy(
+                // ✅ efecto inmediato
+                isOpen = forcedOpen,
+
+                manualOverrideActive = true,
+                manualOverrideUntilEpochMs = untilEpochMs
+            )
+        }
+    }
+
+    override fun clearManualOverride() {
+        println("MarketRepo.clearManualOverride()")
+
+        _marketState.update { st ->
+            st.copy(
+                manualOverrideActive = false,
+                manualOverrideUntilEpochMs = 0L
+            )
+        }
+        // ✅ Importante: no “recalculamos” aquí el horario.
+        // Eso lo hará MarketClock en el siguiente tick o con checkNow().
     }
 
     // =========================
@@ -160,30 +205,32 @@ class InMemoryMarketRepository(
     }
 
     // =========================
-    // Publish consolidado
+    // Publish (optimizado)
     // =========================
     override fun publish() {
-        // Evitamos “pisarnos” si varios tickers publican a la vez
         val list = synchronized(publishLock) { buildStocksList() }
-        _marketState.update { it.copy(stocks = list) }
+
+        if (list == lastPublishedStocks) return
+        lastPublishedStocks = list
+
+        _marketState.update { st ->
+            st.copy(stocks = list)
+        }
     }
 
     private fun buildStocksList(): List<StockSnapshot> {
-        // Orden estable sin hacer sort cada tick
         val result = ArrayList<StockSnapshot>(orderedTickers.size)
         for (t in orderedTickers) {
-            val snap = snapshots.get(t)
-            if (snap != null) result.add(snap)
+            snapshots.get(t)?.let(result::add)
         }
         return result
     }
 
     // =========================
-    // Helper opcional (seguro)
+    // Helper opcional
     // =========================
     suspend fun expireSectorBiasLater(sector: Sector, delayMs: Long) {
         if (delayMs <= 0) return
-        // Capturamos el bias actual para no borrar uno “nuevo” posterior
         val expected = getSectorBiasPercent(sector)
         delay(delayMs)
         if (getSectorBiasPercent(sector) == expected) {
@@ -191,6 +238,5 @@ class InMemoryMarketRepository(
         }
     }
 
-    private fun normalizeTicker(raw: String): String =
-        raw.trim().uppercase()
+    private fun normalizeTicker(raw: String): String = raw.trim().uppercase()
 }
