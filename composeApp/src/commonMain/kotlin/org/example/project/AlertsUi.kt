@@ -5,8 +5,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -423,6 +427,7 @@ private enum class AlertUiType(val label: String) {
     PCT_BELOW("% ≤")
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun CreateAlertDialog(
     defaultTicker: String,
@@ -445,6 +450,7 @@ internal fun CreateAlertDialog(
 
     val dialogShape = RoundedCornerShape(18.dp)
     val innerShape = RoundedCornerShape(14.dp)
+    val chipShape = RoundedCornerShape(999.dp)
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
@@ -474,22 +480,41 @@ internal fun CreateAlertDialog(
                 if (tickers.isEmpty()) {
                     Text("No hay tickers.", color = neutral, style = MaterialTheme.typography.bodySmall)
                 } else {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        tickers.take(8).forEach { t ->
-                            val sel = t == ticker
-                            val bg = if (sel) brand.copy(alpha = 0.16f) else Color.Transparent
-                            val br = if (sel) brand.copy(alpha = 0.35f) else stroke
-                            val fg = if (sel) Color(0xFFEAF1FF) else textSoft
+                    val tickerScroll = rememberScrollState()
 
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(999.dp))
-                                    .background(bg)
-                                    .border(1.dp, br, RoundedCornerShape(999.dp))
-                                    .clickable { ticker = t; error = null }
-                                    .padding(horizontal = 12.dp, vertical = 7.dp)
-                            ) {
-                                Text(t, color = fg, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 120.dp)
+                            .verticalScroll(tickerScroll)
+                    ) {
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            tickers.forEach { t ->
+                                val sel = t == ticker
+                                val bg = if (sel) brand.copy(alpha = 0.16f) else Color.Transparent
+                                val br = if (sel) brand.copy(alpha = 0.35f) else stroke
+                                val fg = if (sel) Color(0xFFEAF1FF) else textSoft
+
+                                Box(
+                                    modifier = Modifier
+                                        .clip(chipShape)
+                                        .background(bg)
+                                        .border(1.dp, br, chipShape)
+                                        .clickable { ticker = t; error = null }
+                                        .padding(horizontal = 12.dp, vertical = 7.dp)
+                                ) {
+                                    Text(
+                                        t,
+                                        color = fg,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1
+                                    )
+                                }
                             }
                         }
                     }
@@ -507,13 +532,18 @@ internal fun CreateAlertDialog(
 
                         Box(
                             modifier = Modifier
-                                .clip(RoundedCornerShape(999.dp))
+                                .clip(chipShape)
                                 .background(bg)
-                                .border(1.dp, br, RoundedCornerShape(999.dp))
+                                .border(1.dp, br, chipShape)
                                 .clickable { type = t; error = null }
                                 .padding(horizontal = 12.dp, vertical = 7.dp)
                         ) {
-                            Text(t.label, color = fg, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                t.label,
+                                color = fg,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
                         }
                     }
                 }

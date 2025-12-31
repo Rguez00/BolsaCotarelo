@@ -411,15 +411,10 @@ fun AppRoot() {
                             }
 
                             PortfolioStateMenuButton(
-                                onSaveNow = onSavePortfolioNow,
-                                onExportJson = onExportPortfolioJson,
-                                onImportJson = onImportPortfolioJson,
-                                onReset = onResetPortfolio,
                                 onSaveAsJsonFile = onSaveAsJsonFile,
                                 onOpenJsonFile = onOpenJsonFile,
                                 containerColor = p.surface1,
-                                textColor = p.textStrong,
-                                dividerColor = p.strokeSoft
+                                textColor = p.textStrong
                             )
                         }
                     )

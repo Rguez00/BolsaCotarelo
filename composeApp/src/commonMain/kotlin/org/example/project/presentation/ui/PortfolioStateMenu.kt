@@ -9,21 +9,20 @@ import androidx.compose.ui.graphics.Color
 
 @Composable
 fun PortfolioStateMenuButton(
-    onSaveNow: () -> Unit,
-    onExportJson: () -> Unit,
-    onImportJson: () -> Unit,
-    onReset: () -> Unit,
     onSaveAsJsonFile: () -> Unit,
     onOpenJsonFile: () -> Unit,
     containerColor: Color,
-    textColor: Color,
-    dividerColor: Color
+    textColor: Color
 ) {
     var expanded by remember { mutableStateOf(false) }
 
     Box {
         IconButton(onClick = { expanded = true }) {
-            Icon(Icons.Filled.MoreVert, contentDescription = "Menú portfolio")
+            Icon(
+                Icons.Filled.MoreVert,
+                contentDescription = "Menú portfolio",
+                tint = textColor
+            )
         }
 
         DropdownMenu(
@@ -33,36 +32,10 @@ fun PortfolioStateMenuButton(
         ) {
 
             DropdownMenuItem(
-                text = { Text("Guardar portfolio", color = textColor) },
-                onClick = {
-                    expanded = false
-                    onSaveNow()
-                }
-            )
-
-            DropdownMenuItem(
                 text = { Text("Guardar como… (JSON)", color = textColor) },
                 onClick = {
                     expanded = false
                     onSaveAsJsonFile()
-                }
-            )
-
-            HorizontalDivider(color = dividerColor)
-
-            DropdownMenuItem(
-                text = { Text("Exportar JSON", color = textColor) },
-                onClick = {
-                    expanded = false
-                    onExportJson()
-                }
-            )
-
-            DropdownMenuItem(
-                text = { Text("Importar JSON", color = textColor) },
-                onClick = {
-                    expanded = false
-                    onImportJson()
                 }
             )
 
@@ -71,16 +44,6 @@ fun PortfolioStateMenuButton(
                 onClick = {
                     expanded = false
                     onOpenJsonFile()
-                }
-            )
-
-            HorizontalDivider(color = dividerColor)
-
-            DropdownMenuItem(
-                text = { Text("Reset portfolio", color = textColor) },
-                onClick = {
-                    expanded = false
-                    onReset()
                 }
             )
         }
