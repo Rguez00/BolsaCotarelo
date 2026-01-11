@@ -376,6 +376,15 @@ fun AppRoot() {
             else -> "•"
         }
 
+// ✅ AÑADE ESTO AQUÍ (después de arrow, antes de BoxWithConstraints)
+        val buttonBgAlpha = if (themeMode == ThemeMode.DARK) 0.16f else 0.4f
+        val buttonStrokeAlpha = if (themeMode == ThemeMode.DARK) 0.38f else 0.7f
+
+// Colores ajustados para los botones
+        val adjustedSuccess = p.success.copy(alpha = buttonBgAlpha)
+        val adjustedDanger = p.danger.copy(alpha = buttonBgAlpha)
+        val adjustedNeutral = p.neutral.copy(alpha = buttonBgAlpha)
+
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
             val isWide = maxWidth >= 900.dp
 
@@ -473,6 +482,7 @@ fun AppRoot() {
                             MainCard(
                                 modifier = Modifier.weight(1f),
                                 p = p,
+                                themeMode = themeMode, // ✅ AÑADE ESTO
                                 sectionGap = sectionGap,
                                 innerPadH = innerPadH,
                                 innerPadV = innerPadV,
@@ -517,6 +527,7 @@ fun AppRoot() {
                                 .fillMaxSize()
                                 .padding(outerPad),
                             p = p,
+                            themeMode = themeMode, // ✅ AÑADE ESTO
                             sectionGap = sectionGap,
                             innerPadH = innerPadH,
                             innerPadV = innerPadV,
@@ -552,7 +563,7 @@ fun AppRoot() {
                             onDeleteAlert = { id -> appScope.launch { alertsRepo.removeRule(id) } },
                             onOpenStrategies = { showStrategiesDialog = true },
                             onExportPortfolioCsv = onExportCsv,
-                            statistics = statistics
+                            statistics = statistics,
                         )
                     }
 

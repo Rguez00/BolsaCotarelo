@@ -40,6 +40,7 @@ import org.example.project.presentation.charts.ProfitBarChart
 import org.example.project.presentation.charts.BarItem
 import org.example.project.presentation.charts.PieChart
 import org.example.project.presentation.charts.PieSlice
+import org.example.project.presentation.mode.ThemeMode
 
 @Composable
 internal fun MainCard(
@@ -80,7 +81,8 @@ internal fun MainCard(
     onDeleteAlert: (Long) -> Unit,
     onOpenStrategies: () -> Unit,
     onExportPortfolioCsv: () -> Unit,
-    statistics: PortfolioStatistics
+    statistics: PortfolioStatistics,
+    themeMode: ThemeMode
 ) {
     val bars = portfolioState.profitBars
     val shape = RoundedCornerShape(20.dp)
@@ -133,6 +135,7 @@ internal fun MainCard(
                 success = p.success,
                 danger = p.danger,
                 neutral = p.neutral,
+                themeMode = themeMode, // ✅ AÑADE ESTO
                 onToggleOpen = onToggleOpen,
                 onTogglePause = onTogglePause,
                 onSetSpeed = onSetSpeed,
@@ -1219,6 +1222,7 @@ private fun CompactTopBarUltra(
     success: Color,
     danger: Color,
     neutral: Color,
+    themeMode: ThemeMode, // ✅ CORRECTO (es un parámetro)
     onToggleOpen: () -> Unit,
     onTogglePause: () -> Unit,
     onSetSpeed: (Double) -> Unit,
@@ -1281,25 +1285,28 @@ private fun CompactTopBarUltra(
                         stroke = (if (isOpen) danger else success).copy(alpha = 0.38f),
                         fg = if (isOpen) danger else success,
                         modifier = Modifier.weight(1f),
+                        themeMode = themeMode, // ✅ AÑADE ESTO
                         enabled = true, // ✅ siempre activo (AUTO usa override temporal)
                         onClick = onToggleOpen
                     )
 
                     ControlChip(
                         text = if (isPaused) "REANUDAR" else "PAUSAR",
-                        bg = neutral.copy(alpha = 0.14f),
-                        stroke = neutral.copy(alpha = 0.30f),
+                        bg = neutral.copy(alpha = 0.14f), // ❌ QUITAR
+                        stroke = neutral.copy(alpha = 0.30f), // ❌ QUITAR
                         fg = Color(0xFFE3ECFF),
                         modifier = Modifier.weight(1f),
+                        themeMode = themeMode, // ✅ AÑADE ESTO
                         onClick = onTogglePause
                     )
 
                     ControlChip(
                         text = if (autoScheduleEnabled) "HORARIO ✓" else "HORARIO",
-                        bg = (if (autoScheduleEnabled) success else neutral).copy(alpha = 0.14f),
-                        stroke = (if (autoScheduleEnabled) success else neutral).copy(alpha = 0.30f),
+                        bg = (if (autoScheduleEnabled) success else neutral).copy(alpha = 0.14f), // ❌ QUITAR
+                        stroke = (if (autoScheduleEnabled) success else neutral).copy(alpha = 0.30f), // ❌ QUITAR
                         fg = Color(0xFFE3ECFF),
                         modifier = Modifier.weight(1f),
+                        themeMode = themeMode, // ✅ AÑADE ESTO
                         onClick = onOpenSchedule
                     )
                 }
@@ -1360,15 +1367,25 @@ private fun ControlChip(
     stroke: Color,
     fg: Color,
     modifier: Modifier,
+    themeMode: ThemeMode, // ✅ CORRECTO (es un parámetro)
     enabled: Boolean = true, // ✅ NUEVO
     onClick: () -> Unit
 ) {
     val shape = RoundedCornerShape(999.dp)
     val alpha = if (enabled) 1f else 0.45f
 
+    val isLightGray = fg.red > 0.8f && fg.green > 0.8f && fg.blue > 0.8f
+
+
+    val textColor = if (themeMode == ThemeMode.LIGHT && isLightGray) {
+        Color(0xFF0F172A)
+    } else {
+        fg
+    }
+
     Box(
         modifier = modifier
-            .heightIn(min = 36.dp) // ✅ un pelín más de alto para que “respire”
+            .heightIn(min = 36.dp)
             .clip(shape)
             .background(bg.copy(alpha = bg.alpha * alpha))
             .border(1.dp, stroke.copy(alpha = stroke.alpha * alpha), shape)
@@ -1380,7 +1397,7 @@ private fun ControlChip(
             text = text,
             style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.SemiBold,
-            color = fg.copy(alpha = alpha),
+            color = textColor.copy(alpha = alpha), // ✅ USA textColor en lugar de fg
             maxLines = 1,
             overflow = TextOverflow.Ellipsis // ✅ por si en móviles MUY pequeños
         )

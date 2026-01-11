@@ -51,16 +51,20 @@ internal data class AppPalette(
         fun lightFintechWhiteBackdrop(): AppPalette = AppPalette(
             surface0 = Color(0xFFF8FAFC),
             surface1 = Color(0xFFFFFFFF),
-            surface2 = Color(0xFFEFF6FF),
-            stroke = Color(0x1F000000),
-            strokeSoft = Color(0x14000000),
+            surface2 = Color(0xFFE2E8F0),
+
+            stroke = Color(0xFF94A3B8),
+            strokeSoft = Color(0xFFCBD5E1),
+
             brand = Color(0xFF0284C7),
             brand2 = Color(0xFF7C3AED),
+
             success = Color(0xFF059669),
             danger = Color(0xFFDC2626),
             neutral = Color(0xFF64748B),
+
             textStrong = Color(0xFF0F172A),
-            textSoft = Color(0xFF334155),
+            textSoft = Color(0xFF475569),
             textMuted = Color(0xFF64748B)
         )
     }
