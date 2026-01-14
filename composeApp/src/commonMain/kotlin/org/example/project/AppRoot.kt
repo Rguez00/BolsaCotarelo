@@ -45,6 +45,13 @@ import kotlin.math.abs
 fun AppRoot() {
     val appScope = rememberCoroutineScope()
     var themeMode by rememberSaveable { mutableStateOf(ThemeMode.DARK) }
+    val systemDark = androidx.compose.foundation.isSystemInDarkTheme()
+    val effectiveTheme = when (themeMode) {
+        ThemeMode.DARK -> ThemeMode.DARK
+        ThemeMode.LIGHT -> ThemeMode.LIGHT
+        ThemeMode.SYSTEM -> if (systemDark) ThemeMode.DARK else ThemeMode.LIGHT
+    }
+
 
     val jsonStore = rememberJsonStore("portfolio.json")
     val jsonFileIO = rememberPortfolioJsonFileIO()
@@ -358,12 +365,13 @@ fun AppRoot() {
         }
     }
 
-    AppTheme(themeMode) {
-        val p = when (themeMode) {
+    AppTheme(effectiveTheme) {
+        val p = when (effectiveTheme) {
             ThemeMode.DARK -> AppPalette.darkFintechWhiteBackdrop()
             ThemeMode.LIGHT -> AppPalette.lightFintechWhiteBackdrop()
-            ThemeMode.SYSTEM -> AppPalette.darkFintechWhiteBackdrop()
+            ThemeMode.SYSTEM -> AppPalette.lightFintechWhiteBackdrop() // no se usará
         }
+
         fun pctColor(pct: Double) = when {
             pct > 0.0001 -> p.success
             pct < -0.0001 -> p.danger
@@ -472,6 +480,7 @@ fun AppRoot() {
 
                             MainCard(
                                 modifier = Modifier.weight(1f),
+                                themeMode = effectiveTheme,
                                 p = p,
                                 sectionGap = sectionGap,
                                 innerPadH = innerPadH,
@@ -517,6 +526,7 @@ fun AppRoot() {
                                 .fillMaxSize()
                                 .padding(outerPad),
                             p = p,
+                            themeMode = effectiveTheme,
                             sectionGap = sectionGap,
                             innerPadH = innerPadH,
                             innerPadV = innerPadV,

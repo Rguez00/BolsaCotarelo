@@ -40,10 +40,12 @@ import org.example.project.presentation.charts.ProfitBarChart
 import org.example.project.presentation.charts.BarItem
 import org.example.project.presentation.charts.PieChart
 import org.example.project.presentation.charts.PieSlice
+import org.example.project.presentation.mode.ThemeMode
 
 @Composable
 internal fun MainCard(
     modifier: Modifier,
+    themeMode: ThemeMode, // 👈 AÑADIR ESTO
     p: AppPalette,
     sectionGap: Dp,
     innerPadH: Dp,
@@ -118,6 +120,7 @@ internal fun MainCard(
             CompactTopBarUltra(
                 cash = portfolioState.cash,
                 value = portfolioState.portfolioValue,
+                themeMode = themeMode,
                 pnlEuro = portfolioState.pnlEuro,
                 pnlPercent = portfolioState.pnlPercent,
                 isOpen = marketState.isOpen,
@@ -1204,6 +1207,7 @@ private fun HeaderCompact(
 private fun CompactTopBarUltra(
     cash: Double,
     value: Double,
+    themeMode: ThemeMode,
     pnlEuro: Double,
     pnlPercent: Double,
     isOpen: Boolean,
@@ -1269,6 +1273,14 @@ private fun CompactTopBarUltra(
             // - Chips (CERRAR/PAUSAR/HORARIO) en una fila.
             // - Velocidad (SpeedInline) en una segunda fila, para que no “aplane” los textos.
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                val isLight = themeMode == ThemeMode.LIGHT
+                val chipFg = if (isLight) textStrong else Color(0xFFE3ECFF)
+
+                val neutralBgA = if (isLight) 0.22f else 0.14f
+                val neutralStrokeA = if (isLight) 0.55f else 0.30f
+
+                val okBgA = if (isLight) 0.20f else 0.14f
+                val okStrokeA = if (isLight) 0.55f else 0.30f
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1287,18 +1299,22 @@ private fun CompactTopBarUltra(
 
                     ControlChip(
                         text = if (isPaused) "REANUDAR" else "PAUSAR",
-                        bg = neutral.copy(alpha = 0.14f),
-                        stroke = neutral.copy(alpha = 0.30f),
-                        fg = Color(0xFFE3ECFF),
+                        bg = neutral.copy(alpha = neutralBgA),
+                        stroke = neutral.copy(alpha = neutralStrokeA),
+                        fg = chipFg,
                         modifier = Modifier.weight(1f),
                         onClick = onTogglePause
                     )
 
                     ControlChip(
                         text = if (autoScheduleEnabled) "HORARIO ✓" else "HORARIO",
-                        bg = (if (autoScheduleEnabled) success else neutral).copy(alpha = 0.14f),
-                        stroke = (if (autoScheduleEnabled) success else neutral).copy(alpha = 0.30f),
-                        fg = Color(0xFFE3ECFF),
+                        bg = (if (autoScheduleEnabled) success else neutral).copy(
+                            alpha = if (autoScheduleEnabled) okBgA else neutralBgA
+                        ),
+                        stroke = (if (autoScheduleEnabled) success else neutral).copy(
+                            alpha = if (autoScheduleEnabled) okStrokeA else neutralStrokeA
+                        ),
+                        fg = chipFg,
                         modifier = Modifier.weight(1f),
                         onClick = onOpenSchedule
                     )
